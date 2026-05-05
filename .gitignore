@@ -1,0 +1,9 @@
+node_modules
+dist
+data/reviews.json
+data/ai-provider.json
+.env
+.vercel
+.DS_Store
+
+.superpowers
