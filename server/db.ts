@@ -17,6 +17,7 @@ export type Database = {
 const storeKey = "reviews";
 let schemaReadyForUrl: string | undefined;
 let cachedSql: { url: string; sql: Sql } | undefined;
+const postgresTimeoutMs = 8000;
 
 export const createEmptyDb = (): Database => ({
   tasks: [],
@@ -55,13 +56,13 @@ function dbPath() {
 async function ensurePostgresSchema(url: string) {
   if (schemaReadyForUrl === url) return;
   const sql = getPostgresClient(url);
-  await sql`
+  await withPostgresTimeout(sql`
     create table if not exists emke_design_review_store (
       key text primary key,
       value jsonb not null,
       updated_at timestamptz not null default now()
     )
-  `;
+  `);
   schemaReadyForUrl = url;
 }
 
@@ -70,9 +71,10 @@ function getPostgresClient(url: string) {
   const sql = postgres(url, {
     max: 1,
     prepare: false,
+    fetch_types: false,
     ssl: "require",
-    idle_timeout: 20,
-    connect_timeout: 10
+    idle_timeout: 5,
+    connect_timeout: 4
   });
   cachedSql = { url, sql };
   return sql;
@@ -91,7 +93,7 @@ export async function readStoreValue<T>(key: string): Promise<T | undefined> {
   if (url) {
     await ensurePostgresSchema(url);
     const sql = getPostgresClient(url);
-    const rows = await sql`select value from emke_design_review_store where key = ${key} limit 1`;
+    const rows = await withPostgresTimeout(sql`select value from emke_design_review_store where key = ${key} limit 1`);
     return rows[0]?.value as T | undefined;
   }
 
@@ -110,11 +112,11 @@ export async function writeStoreValue(key: string, value: unknown) {
   if (url) {
     await ensurePostgresSchema(url);
     const sql = getPostgresClient(url);
-    await sql`
+    await withPostgresTimeout(sql`
       insert into emke_design_review_store (key, value, updated_at)
       values (${key}, ${sql.json(value as postgres.JSONValue)}, now())
       on conflict (key) do update set value = excluded.value, updated_at = now()
-    `;
+    `);
     return;
   }
 
@@ -123,6 +125,20 @@ export async function writeStoreValue(key: string, value: unknown) {
   const targetDir = path.dirname(targetPath);
   if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
   fs.writeFileSync(targetPath, JSON.stringify(value, null, 2));
+}
+
+async function withPostgresTimeout<T>(operation: Promise<T>): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("数据库连接超时，请检查 Supabase DATABASE_URL 或连接池状态")), postgresTimeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 export async function mutateDb<T>(mutator: (db: Database) => T | Promise<T>): Promise<T> {
