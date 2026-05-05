@@ -30,6 +30,7 @@ import "./styles.css";
 import { formatDeductionItem } from "./shared/aiDisplay";
 import { encodeHeaderValue } from "./shared/headerEncoding";
 import { filterIssues, filterTasks, IssueFilters, TaskFilters } from "./shared/filters";
+import { scoreTone } from "./shared/scoreDisplay";
 
 type Role = "设计师" | "运营" | "设计总监" | "管理员";
 type ContentType = "电商页面" | "Amazon A+ 页面" | "官网 Banner";
@@ -550,6 +551,7 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
   const [metaDraft, setMetaDraft] = useState({ title: "", submitterId: "" });
   const [selectedRound, setSelectedRound] = useState<number | "latest">("latest");
   const [issueFilters, setIssueFilters] = useState<IssueFilters>({ frameName: "", type: "", severity: "", resolutionStatus: "", mustFixOnly: false });
+  const [activeIssueId, setActiveIssueId] = useState("");
   const [error, setError] = useState("");
   const frames = data?.frames.filter((frame) => frame.selected || frame.exportedImageUrl) ?? [];
   const activeFrame = frames.find((frame) => frame.id === activeFrameId) ?? frames[0];
@@ -559,7 +561,8 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
   const result = data?.results.filter((item) => item.submissionRound === currentRound).at(-1) ?? data?.results.at(-1);
   const issues = (data?.issues ?? []).filter((issue: any) => (issue.submissionRound ?? data?.task.submissionRound ?? 1) === currentRound);
   const filteredIssues = filterIssues(issues, issueFilters);
-  const activeIssues = filteredIssues.filter((issue) => issue.frameName === activeFrame?.frameName);
+  const visibleAnnotatedIssues = filteredIssues.filter((issue) => issue.annotationSuggestion && (!issue.frameName || !activeFrame?.frameName || issue.frameName === activeFrame.frameName));
+  const annotationIndexByIssueId = new Map(visibleAnnotatedIssues.map((issue, index) => [issue.id, index + 1]));
 
   useEffect(() => {
     if (data?.task) setMetaDraft({ title: data.task.title, submitterId: data.task.submitterId ?? "" });
@@ -683,7 +686,7 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
           <div className="image-stage">
             <div className="zoom-canvas" style={{ transform: `scale(${zoom / 100})` }}>
               {activeFrame?.exportedImageUrl || activeFrame?.thumbnailUrl ? <img src={activeFrame.exportedImageUrl || activeFrame.thumbnailUrl} alt={activeFrame.frameName} /> : <div className="empty">暂无导出图</div>}
-              {activeIssues.filter((issue) => issue.annotationSuggestion).map((issue, index) => <AnnotationBox key={issue.id} issue={issue} index={index + 1} />)}
+              {visibleAnnotatedIssues.map((issue, index) => <AnnotationBox key={issue.id} issue={issue} index={index + 1} active={issue.id === activeIssueId} onFocus={() => setActiveIssueId(issue.id)} />)}
             </div>
           </div>
         </div>
@@ -693,7 +696,7 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
             <div className="panel-head"><h3>问题清单</h3><span>{filteredIssues.length}/{issues.length}</span></div>
             <IssueFilterBar filters={issueFilters} onChange={setIssueFilters} frames={frames} rounds={rounds} selectedRound={selectedRound} onRoundChange={setSelectedRound} />
             <div className="review-list-scroll">
-              {filteredIssues.map((issue, index) => <IssueCard issue={issue} index={index + 1} key={issue.id} />)}
+              {filteredIssues.map((issue, index) => <IssueCard issue={issue} index={index + 1} annotationIndex={annotationIndexByIssueId.get(issue.id)} active={issue.id === activeIssueId} onFocus={() => setActiveIssueId(issue.id)} key={issue.id} />)}
               {issues.length === 0 && <p className="meta">暂无问题记录。</p>}
               {issues.length > 0 && filteredIssues.length === 0 && <div className="lane-empty">当前筛选条件下暂无问题</div>}
               <div className="log-stack">
@@ -768,7 +771,7 @@ function ScorePanel({ result, status }: { result: any; status?: ReviewStatus }) 
           <em>{result.conclusion}</em>
         </div>
         {status ? <span className={`status ${status}`}>{statusLabel[status]}</span> : null}
-        <strong>{result.totalScore}</strong>
+        <strong className={`score-value score-value--${scoreTone(result.totalScore)}`}>{result.totalScore}</strong>
       </div>
       <p className="rubric-note">{passRule}</p>
       <div className="dimension-grid">
@@ -782,17 +785,17 @@ function ScorePanel({ result, status }: { result: any; status?: ReviewStatus }) 
   );
 }
 
-function IssueCard({ issue, index }: { issue: Issue; index: number }) {
+function IssueCard({ issue, index, annotationIndex, active, onFocus }: { issue: Issue; index: number; annotationIndex?: number; active?: boolean; onFocus?: () => void }) {
   return (
-    <article className={`issue ${issue.mustFix ? "must" : ""}`}>
+    <article className={`issue ${issue.mustFix ? "must" : ""} ${active ? "active" : ""}`} onMouseEnter={onFocus} onFocus={onFocus} onClick={onFocus} tabIndex={0}>
       <div className="issue-top">
         <span className="issue-index">{index}</span>
         <strong>{issue.title}</strong>
         <span className={`severity ${issue.severity}`}>{issue.severity}</span>
       </div>
-      <div className="issue-tags"><span>{issue.type}</span>{issue.mustFix ? <span>AI 判定必须修改</span> : <span>AI 建议优化</span>}</div>
+      <div className="issue-tags"><span>{issue.type}</span>{issue.mustFix ? <span>AI 判定必须修改</span> : <span>AI 建议优化</span>}{annotationIndex ? <span className="annotation-link">画面标注 #{annotationIndex}</span> : <span>未生成画面标注</span>}</div>
       <dl>
-        <dt>位置</dt><dd>{issue.frameName || "--"} · {issue.locationDescription || "未指定区域"}</dd>
+        <dt>位置</dt><dd>{annotationIndex ? `见画面标注 #${annotationIndex}` : (issue.frameName || "--")} · {issue.locationDescription || "未指定区域"}</dd>
         <dt>判断</dt><dd>{issue.description}</dd>
         <dt>修改建议</dt><dd>{issue.suggestion}</dd>
         <dt>依据</dt><dd>{issue.relatedStandardSection}</dd>
@@ -801,9 +804,9 @@ function IssueCard({ issue, index }: { issue: Issue; index: number }) {
   );
 }
 
-function AnnotationBox({ issue, index }: { issue: Issue; index: number }) {
+function AnnotationBox({ issue, index, active, onFocus }: { issue: Issue; index: number; active?: boolean; onFocus?: () => void }) {
   const a = issue.annotationSuggestion!;
-  return <button title={issue.title} className={`annotation ${issue.severity}`} style={{ left: `${a.xPercent}%`, top: `${a.yPercent}%`, width: `${a.widthPercent ?? 4}%`, height: `${a.heightPercent ?? 4}%` }}>{index}</button>;
+  return <button title={issue.title} className={`annotation ${issue.severity} ${active ? "active" : ""}`} onMouseEnter={onFocus} onFocus={onFocus} style={{ left: `${a.xPercent}%`, top: `${a.yPercent}%`, width: `${a.widthPercent ?? 4}%`, height: `${a.heightPercent ?? 4}%` }}>{index}</button>;
 }
 
 function VisPage({ session }: { session: Session }) {

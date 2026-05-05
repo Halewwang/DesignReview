@@ -7,6 +7,7 @@ import { loadBrandStandard, parseMarkdownSections, saveUploadedBrandStandard, se
 import { compareIssues, getAiProviderConfig, getDefaultAiModel, normalizeAiReview, saveAiProviderConfig } from "../server/services/aiReview";
 import { decodeHeaderValue, encodeHeaderValue } from "../src/shared/headerEncoding";
 import { formatDeductionItem } from "../src/shared/aiDisplay";
+import { scoreTone } from "../src/shared/scoreDisplay";
 
 describe("parseFigmaUrl", () => {
   it("extracts file key and node id from design URLs", () => {
@@ -163,5 +164,12 @@ describe("AI result display helpers", () => {
   it("formats object deduction items into renderable text", () => {
     expect(formatDeductionItem({ reason: "缺少 CTA", penalty: 4 })).toBe("缺少 CTA");
     expect(formatDeductionItem({ field: "color", penalty: 2 })).toBe("field: color；penalty: 2");
+  });
+
+  it("maps score ranges to visual tones", () => {
+    expect(scoreTone(59)).toBe("danger");
+    expect(scoreTone(65)).toBe("orange");
+    expect(scoreTone(71)).toBe("warning");
+    expect(scoreTone(85)).toBe("success");
   });
 });

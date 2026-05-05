@@ -2805,6 +2805,95 @@ nav button,
   max-width: 560px;
 }
 
+.review-list-panel .issue-filter-bar {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  gap: 6px !important;
+  margin-top: 8px !important;
+}
+
+.review-list-panel .issue-filter-bar select {
+  min-height: 34px !important;
+  height: 34px !important;
+  padding: 0 30px 0 10px !important;
+  font-size: 12px !important;
+}
+
+.review-list-panel .filter-note {
+  grid-column: span 2 !important;
+  min-height: 34px !important;
+  padding: 8px 10px !important;
+  font-size: 11px !important;
+  line-height: 1.2 !important;
+}
+
+.review-list-panel .segmented {
+  grid-column: span 2 !important;
+  min-height: 34px !important;
+  padding: 3px !important;
+  gap: 3px !important;
+}
+
+.review-list-panel .segmented button {
+  min-height: 28px !important;
+  padding: 0 10px !important;
+  font-size: 12px !important;
+}
+
+.score-value {
+  transition: color .18s ease, text-shadow .18s ease;
+}
+
+.score-value--danger {
+  color: #ff4d4f !important;
+  text-shadow: 0 0 22px rgba(255, 77, 79, .18);
+}
+
+.score-value--orange {
+  color: #ff9f1a !important;
+  text-shadow: 0 0 22px rgba(255, 159, 26, .18);
+}
+
+.score-value--warning {
+  color: #ffd84d !important;
+  text-shadow: 0 0 22px rgba(255, 216, 77, .18);
+}
+
+.score-value--success {
+  color: #36d675 !important;
+  text-shadow: 0 0 22px rgba(54, 214, 117, .18);
+}
+
+.annotation {
+  z-index: 2;
+  cursor: pointer;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.25), 0 8px 22px rgba(0,0,0,.28);
+}
+
+.annotation.active,
+.annotation:hover,
+.annotation:focus-visible {
+  z-index: 3;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(255,255,255,.92), 0 0 0 7px rgba(0,153,255,.55), 0 14px 34px rgba(0,0,0,.34);
+}
+
+.annotation-link {
+  color: var(--accent-foreground) !important;
+  background: color-mix(in oklch, var(--accent) 84%, black) !important;
+}
+
+.issue {
+  cursor: pointer;
+}
+
+.issue.active,
+.issue:hover,
+.issue:focus-visible {
+  outline: none;
+  border-color: color-mix(in oklch, var(--accent) 70%, var(--border));
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--accent) 52%, transparent), 0 12px 30px rgba(0,0,0,.18);
+}
+
 .choice-group {
   gap: 4px !important;
   padding: 4px !important;
@@ -2841,5 +2930,14 @@ nav button,
   .review-list-panel {
     height: auto !important;
     max-height: none !important;
+  }
+
+  .review-list-panel .issue-filter-bar {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .review-list-panel .filter-note,
+  .review-list-panel .segmented {
+    grid-column: 1 / -1 !important;
   }
 }
