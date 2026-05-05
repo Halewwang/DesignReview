@@ -23,7 +23,7 @@ npm run dev
 - `AI_PROVIDER_BASE_URL`: 兼容 OpenAI Chat Completions 的 Provider Base URL。未配置时预设为 `https://api.derouter.ai/openai/v1`。
 - `AI_MODEL`: 默认视觉模型。未配置时预设为 `claude-sonnet-4-6`。
 - `BRAND_STANDARD_PATH`: EMKE VIS 标准源。未配置时优先读取管理员上传的 `data/brand-standard.md`，再读取项目根目录 `品牌设计规范.md`。
-- `DATABASE_URL` / `POSTGRES_URL`: Neon Postgres 连接串。配置后 API 使用 Neon 持久化任务、结果、日志、运行时 AI 配置和线上上传的 VIS 标准源；未配置时本地 fallback 到 `data/reviews.json`。
+- `DATABASE_URL` / `POSTGRES_URL`: Postgres 连接串，推荐使用 Supabase Transaction Pooler 或 Vercel Marketplace 数据库。配置后 API 使用 Postgres 持久化任务、结果、日志、运行时 AI 配置和线上上传的 VIS 标准源；未配置时本地 fallback 到 `data/reviews.json`。
 
 未配置 AI Key 时，系统会返回开发占位审核结果，用于本地验证流程；接入真实审核必须配置视觉模型 API Key。未配置 Figma Token 时，Figma 读取会明确报错。
 
@@ -31,10 +31,10 @@ npm run dev
 
 项目包含 `vercel.json` 和 `api/index.ts`，同一个 Vercel 项目会部署 Vite 前端和 `/api/*` Serverless Function。
 
-1. 在 Vercel Marketplace 创建 Neon Postgres，并把 `DATABASE_URL` 注入 Production/Preview。
+1. 在 Supabase 创建项目，复制 Transaction Pooler 连接串，或使用任意 Vercel 可访问的 Postgres，把连接串配置到 Vercel 的 `DATABASE_URL`。
 2. 在 Vercel 环境变量中配置 `REVIEW_ACCESS_CODE`、`FIGMA_TOKEN`、`AI_PROVIDER_API_KEY`、`AI_PROVIDER_BASE_URL`、`AI_MODEL`、`MAX_FRAMES_PER_TASK`。
 3. 推送到 GitHub 后通过 Vercel Git 集成部署，或运行 `vercel deploy --prod`。
-4. 部署后访问 `/api/health`，确认 `storageMode` 为 `neon` 且 Figma/AI 配置状态符合预期。
+4. 部署后访问 `/api/health`，确认 `storageMode` 为 `postgres` 且 Figma/AI 配置状态符合预期。
 
 ## MVP Scope
 

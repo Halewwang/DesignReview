@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { neon } from "@neondatabase/serverless";
+import postgres from "postgres";
+import type { Sql } from "postgres";
 import { AuditLog, DirectorDecision, OperationReview, ReviewFrame, ReviewIssue, ReviewResult, ReviewTask } from "./types";
 
 export type Database = {
@@ -15,6 +16,7 @@ export type Database = {
 
 const storeKey = "reviews";
 let schemaReadyForUrl: string | undefined;
+let cachedSql: { url: string; sql: Sql } | undefined;
 
 export const createEmptyDb = (): Database => ({
   tasks: [],
@@ -35,7 +37,7 @@ export function now() {
 }
 
 export function getStorageMode() {
-  return databaseUrl() ? "neon" : "json";
+  return databaseUrl() ? "postgres" : "json";
 }
 
 function databaseUrl() {
@@ -50,9 +52,9 @@ function dbPath() {
   return process.env.REVIEWS_DB_PATH || path.join(dataDir(), "reviews.json");
 }
 
-async function ensureNeonSchema(url: string) {
+async function ensurePostgresSchema(url: string) {
   if (schemaReadyForUrl === url) return;
-  const sql = neon(url);
+  const sql = getPostgresClient(url);
   await sql`
     create table if not exists emke_design_review_store (
       key text primary key,
@@ -61,6 +63,19 @@ async function ensureNeonSchema(url: string) {
     )
   `;
   schemaReadyForUrl = url;
+}
+
+function getPostgresClient(url: string) {
+  if (cachedSql?.url === url) return cachedSql.sql;
+  const sql = postgres(url, {
+    max: 1,
+    prepare: false,
+    ssl: "require",
+    idle_timeout: 20,
+    connect_timeout: 10
+  });
+  cachedSql = { url, sql };
+  return sql;
 }
 
 export async function readDb(): Promise<Database> {
@@ -74,8 +89,8 @@ export async function writeDb(db: Database) {
 export async function readStoreValue<T>(key: string): Promise<T | undefined> {
   const url = databaseUrl();
   if (url) {
-    await ensureNeonSchema(url);
-    const sql = neon(url);
+    await ensurePostgresSchema(url);
+    const sql = getPostgresClient(url);
     const rows = await sql`select value from emke_design_review_store where key = ${key} limit 1`;
     return rows[0]?.value as T | undefined;
   }
@@ -93,11 +108,11 @@ export async function readStoreValue<T>(key: string): Promise<T | undefined> {
 export async function writeStoreValue(key: string, value: unknown) {
   const url = databaseUrl();
   if (url) {
-    await ensureNeonSchema(url);
-    const sql = neon(url);
+    await ensurePostgresSchema(url);
+    const sql = getPostgresClient(url);
     await sql`
       insert into emke_design_review_store (key, value, updated_at)
-      values (${key}, ${JSON.stringify(value)}::jsonb, now())
+      values (${key}, ${sql.json(value as postgres.JSONValue)}, now())
       on conflict (key) do update set value = excluded.value, updated_at = now()
     `;
     return;

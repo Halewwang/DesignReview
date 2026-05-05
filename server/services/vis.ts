@@ -50,14 +50,14 @@ export function loadBrandStandard() {
 }
 
 export async function loadBrandStandardAsync() {
-  if (getStorageMode() === "neon") {
+  if (getStorageMode() === "postgres") {
     const uploaded = await readStoreValue<{ fileName: string; content: string }>("brand-standard");
     if (uploaded?.content) {
       return {
         fileName: uploaded.fileName || "brand-standard.md",
         brand: "EMKE",
         version: "Draft v0.1",
-        path: "neon://emke_design_review_store/brand-standard",
+        path: "postgres://emke_design_review_store/brand-standard",
         content: uploaded.content
       };
     }
@@ -83,12 +83,12 @@ export function saveUploadedBrandStandard(content: string, fileName = "brand-sta
 
 export async function saveUploadedBrandStandardAsync(content: string, fileName = "brand-standard.md") {
   const normalized = validateBrandStandardContent(content);
-  if (getStorageMode() === "neon") {
+  if (getStorageMode() === "postgres") {
     await writeStoreValue("brand-standard", { fileName: fileName || "brand-standard.md", content: normalized });
     return {
       fileName: fileName || "brand-standard.md",
       storedFileName: "brand-standard",
-      path: "neon://emke_design_review_store/brand-standard",
+      path: "postgres://emke_design_review_store/brand-standard",
       content: normalized
     };
   }

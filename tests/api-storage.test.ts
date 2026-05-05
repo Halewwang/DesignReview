@@ -83,6 +83,12 @@ describe("API validation and health", () => {
 });
 
 describe("storage adapter", () => {
+  it("uses the generic Postgres adapter when DATABASE_URL is configured", () => {
+    process.env.DATABASE_URL = "postgresql://postgres:postgres@example.supabase.co:5432/postgres";
+
+    expect(getStorageMode()).toBe("postgres");
+  });
+
   it("persists mutations through the active storage adapter", async () => {
     await mutateDb((db) => {
       Object.assign(db, createEmptyDb());
