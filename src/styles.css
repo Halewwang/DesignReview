@@ -3060,6 +3060,52 @@ nav button,
   min-width: 0 !important;
 }
 
+.frame-selection-head {
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) auto !important;
+  align-items: end !important;
+  gap: 18px !important;
+}
+
+.frame-selection-head > div:first-child {
+  text-align: left;
+}
+
+.frame-selection-head h2 {
+  text-align: left;
+  line-height: 1.02;
+}
+
+.frame-selection-head p {
+  max-width: none;
+}
+
+.frame-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.frame-head-actions .ghost,
+.frame-head-actions .primary {
+  min-height: 42px;
+  height: 42px;
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+.frame-empty {
+  min-height: 112px;
+  display: grid !important;
+  place-items: center !important;
+  text-align: center !important;
+}
+
+.frame-empty .primary {
+  margin: 0 auto;
+}
+
 .choice-group {
   gap: 4px !important;
   padding: 4px !important;
@@ -3105,5 +3151,15 @@ nav button,
   .review-list-panel .filter-note,
   .review-list-panel .segmented {
     grid-column: 1 / -1 !important;
+  }
+
+  .frame-selection-head {
+    grid-template-columns: 1fr !important;
+    align-items: stretch !important;
+  }
+
+  .frame-head-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 }

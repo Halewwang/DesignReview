@@ -451,6 +451,7 @@ function normalizeAiOnlyStatus(status: ReviewTask["status"], score?: number): Re
 
 function errorStatus(error: unknown) {
   const message = errorMessage(error);
+  if (message.includes("Figma API 限流") || message.includes("Rate limit")) return 429;
   if (message.includes("无权")) return 403;
   if (
     message.includes("不允许") ||

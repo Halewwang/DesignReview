@@ -466,11 +466,17 @@ function FrameSelection({ session, taskId, onBack, onDetail }: { session: Sessio
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [actionError, setActionError] = useState("");
+  const [retryAfter, setRetryAfter] = useState(0);
   const frames = data?.frames ?? [];
   const pages = [...new Set(frames.map((frame) => frame.pageName))];
   const maxFrames = Number(health?.maxFramesPerTask ?? 12);
 
   useEffect(() => setSelected(new Set(frames.filter((frame) => frame.selected).map((frame) => frame.id))), [frames.length]);
+  useEffect(() => {
+    if (retryAfter <= 0) return;
+    const timer = window.setTimeout(() => setRetryAfter((value) => Math.max(0, value - 1)), 1000);
+    return () => window.clearTimeout(timer);
+  }, [retryAfter]);
 
   async function startAiReview() {
     setBusy(true);
@@ -493,7 +499,9 @@ function FrameSelection({ session, taskId, onBack, onDetail }: { session: Sessio
       await api(`/api/reviews/${taskId}/read-figma`, session, { method: "POST" });
       reload();
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "读取 Figma 失败");
+      const message = err instanceof Error ? err.message : "读取 Figma 失败";
+      if (message.includes("Figma API 限流") || message.includes("Rate limit")) setRetryAfter(60);
+      setActionError(message);
     } finally {
       setBusy(false);
     }
@@ -515,10 +523,12 @@ function FrameSelection({ session, taskId, onBack, onDetail }: { session: Sessio
 
   return (
     <main className="workspace">
-      <div className="page-head">
-        <button className="ghost" onClick={onBack}><ArrowLeft size={15} /> 返回</button>
+      <div className="page-head frame-selection-head">
         <div><h2>选择需要审核的 Frame</h2><p>只导出手动选择的顶层 Frame，单次最多 {maxFrames} 个。已选 {selected.size}/{maxFrames}。</p></div>
-        <button className="primary" disabled={busy || selected.size === 0 || selected.size > maxFrames} onClick={startAiReview}>{busy ? "处理中..." : `开始 AI 初审 (${selected.size})`} <Sparkles size={16} /></button>
+        <div className="frame-head-actions">
+          <button className="ghost" onClick={onBack}><ArrowLeft size={15} /> 返回</button>
+          <button className="primary" disabled={busy || selected.size === 0 || selected.size > maxFrames} onClick={startAiReview}>{busy ? "处理中..." : `开始 AI 初审 (${selected.size})`} <Sparkles size={16} /></button>
+        </div>
       </div>
       {selected.size > maxFrames && <div className="error">当前选择超过单次上限，请减少到 {maxFrames} 个 Frame 以内。</div>}
       {(error || actionError) && <div className="error">{error || actionError}</div>}
@@ -536,7 +546,7 @@ function FrameSelection({ session, taskId, onBack, onDetail }: { session: Sessio
           </div>
         </section>
       ))}
-      {frames.length === 0 && <div className="empty">{data?.task?.status === "figma_read_failed" ? <button className="primary" onClick={readFigmaAgain} disabled={busy}>重新读取 Figma</button> : <button className="primary" onClick={reload}>重新读取任务</button>}</div>}
+      {frames.length === 0 && <div className="empty frame-empty">{data?.task?.status === "figma_read_failed" ? <button className="primary" onClick={readFigmaAgain} disabled={busy || retryAfter > 0}>{retryAfter > 0 ? `等待 ${retryAfter}s 后重试` : "重新读取 Figma"}</button> : <button className="primary" onClick={reload}>重新读取任务</button>}</div>}
     </main>
   );
 }

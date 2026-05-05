@@ -35,6 +35,10 @@ async function figmaFetch(path: string) {
   });
   if (!response.ok) {
     const text = await response.text();
+    if (response.status === 429) {
+      const retryAfter = response.headers.get("retry-after");
+      throw new Error(`Figma API 限流：短时间读取或导出请求过多。${retryAfter ? `请等待约 ${retryAfter} 秒后重试。` : "请等待 1-2 分钟后再重试。"}原始响应：${text}`);
+    }
     throw new Error(`Figma API 请求失败：${response.status} ${text}`);
   }
   return response.json();
