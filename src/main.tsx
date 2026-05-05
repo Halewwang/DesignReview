@@ -392,10 +392,8 @@ function TaskCard({ task, onOpen, compact = false }: { task: Task; onOpen: (id: 
           <div className="meta">{task.contentType} · {task.submitterName}{task.submitterId ? ` #${task.submitterId}` : ""}</div>
         </div>
         <div className="task-stats">
-          <span className="round-mini">{task.submissionRound}</span>
           <Chip size="sm" variant="soft" className={`status ${task.status}`}>{statusLabel[task.status]}</Chip>
-          <span className="score-chip">{task.aiTotalScore ?? "--"}</span>
-          <span>{task.issueCount ?? 0} issues</span>
+          <span className={`score-chip score-chip--${scoreTone(task.aiTotalScore)}`}>{task.aiTotalScore ?? "--"}</span>
         </div>
       </Card.Content>
     </Card>
@@ -699,10 +697,12 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
               {filteredIssues.map((issue, index) => <IssueCard issue={issue} index={index + 1} annotationIndex={annotationIndexByIssueId.get(issue.id)} active={issue.id === activeIssueId} onFocus={() => setActiveIssueId(issue.id)} key={issue.id} />)}
               {issues.length === 0 && <p className="meta">暂无问题记录。</p>}
               {issues.length > 0 && filteredIssues.length === 0 && <div className="lane-empty">当前筛选条件下暂无问题</div>}
-              <div className="log-stack">
-                <h3>提交记录</h3>
-                {data.logs.map((log) => <div className="log" key={log.id}>{log.action}<span>{new Date(log.createdAt).toLocaleString()}</span></div>)}
-              </div>
+            </div>
+          </section>
+          <section className="panel log-panel">
+            <div className="panel-head"><h3>提交记录</h3><span>{data.logs.length}</span></div>
+            <div className="log-grid">
+              {data.logs.map((log) => <div className="log" key={log.id}>{log.action}<span>{new Date(log.createdAt).toLocaleString()}</span></div>)}
             </div>
           </section>
         </aside>
@@ -750,7 +750,6 @@ function IssueFilterBar({
         <option>轻微</option>
         <option>建议</option>
       </select>
-      <div className="filter-note">这些选项只用于查看问题，不需要人工勾选完成。</div>
       <div className="segmented">
         <button className={!filters.mustFixOnly ? "active" : ""} onClick={() => onChange({ ...filters, mustFixOnly: false })}>全部问题</button>
         <button className={filters.mustFixOnly ? "active" : ""} onClick={() => onChange({ ...filters, mustFixOnly: true })}>必须修改</button>
@@ -768,7 +767,6 @@ function ScorePanel({ result, status }: { result: any; status?: ReviewStatus }) 
       <div className="score-hero">
         <div className="score-title">
           <span>AI 初审总分</span>
-          <em>{result.conclusion}</em>
         </div>
         {status ? <span className={`status ${status}`}>{statusLabel[status]}</span> : null}
         <strong className={`score-value score-value--${scoreTone(result.totalScore)}`}>{result.totalScore}</strong>
@@ -806,7 +804,18 @@ function IssueCard({ issue, index, annotationIndex, active, onFocus }: { issue: 
 
 function AnnotationBox({ issue, index, active, onFocus }: { issue: Issue; index: number; active?: boolean; onFocus?: () => void }) {
   const a = issue.annotationSuggestion!;
-  return <button title={issue.title} className={`annotation ${issue.severity} ${active ? "active" : ""}`} onMouseEnter={onFocus} onFocus={onFocus} style={{ left: `${a.xPercent}%`, top: `${a.yPercent}%`, width: `${a.widthPercent ?? 4}%`, height: `${a.heightPercent ?? 4}%` }}>{index}</button>;
+  const width = a.widthPercent ?? 4;
+  const height = a.heightPercent ?? 4;
+  const broad = width >= 88 && height >= 88;
+  const pinX = Math.min(96, Math.max(4, a.xPercent + width / 2));
+  const pinY = Math.min(96, Math.max(4, a.yPercent + height / 2));
+  const region = !broad || active ? <span className={`annotation-region ${issue.severity} ${active ? "active" : ""} ${broad ? "broad" : ""}`} style={{ left: `${a.xPercent}%`, top: `${a.yPercent}%`, width: `${width}%`, height: `${height}%` }} /> : null;
+  return (
+    <>
+      {region}
+      <button title={issue.title} className={`annotation-pin ${issue.severity} ${active ? "active" : ""}`} onMouseEnter={onFocus} onFocus={onFocus} style={{ left: `${pinX}%`, top: `${pinY}%` }}>{index}</button>
+    </>
+  );
 }
 
 function VisPage({ session }: { session: Session }) {
