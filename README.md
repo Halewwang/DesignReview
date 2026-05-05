@@ -1,6 +1,6 @@
 # EMKE Design Review Command Center
 
-内部设计审核 MVP。设计师提交 Figma 链接后，服务端用团队统一 `FIGMA_TOKEN` 读取 Page 与顶层 Frame，前端展示缩略图、名称和尺寸。设计师手动选择 Frame 后，服务端导出图片并调用视觉 AI，AI 仅基于导出图片和 `品牌设计规范.md` 进行结构化初审。
+内部设计审核 MVP。默认流程支持设计师上传最多 9 张图片创建单个审核项目，服务端直接将图片送入视觉 AI 初审。系统仍保留 Figma 链接导入：服务端可用团队统一 `FIGMA_TOKEN` 读取 Page 与顶层 Frame，前端展示缩略图、名称和尺寸。AI 仅基于审核图片和 `品牌设计规范.md` 进行结构化初审。
 
 ## Run
 
@@ -19,6 +19,8 @@ npm run dev
 ## Environment
 
 - `FIGMA_TOKEN`: 团队统一 Figma Token，只在服务端使用。
+- `MAX_UPLOAD_IMAGES_PER_TASK`: 单个上传审核项目最多图片数，默认 `9`。
+- `API_JSON_LIMIT`: API JSON 请求体上限，默认 `240mb`，用于承载最多 9 张、单张 20MB 的上传图片 data URL。
 - `AI_PROVIDER_API_KEY` 或 `OPENAI_API_KEY`: 视觉模型 API Key。也可以在管理员「系统设置」里保存运行时 Key。
 - `AI_PROVIDER_BASE_URL`: 兼容 OpenAI Chat Completions 的 Provider Base URL。未配置时预设为 `https://api.derouter.ai/openai/v1`。
 - `AI_MODEL`: 默认视觉模型。未配置时预设为 `claude-sonnet-4-6`。
@@ -40,6 +42,7 @@ npm run dev
 
 - 访问口令 + 身份选择 + 姓名输入
 - 工作台、新建任务、Frame 选择、审核详情
+- 上传图片创建审核项目，单个项目最多 9 张图
 - Figma URL 解析、文件结构读取、顶层 Frame 缩略图、选中 Frame 导出
 - AI 初审 JSON 结果、四维评分、问题清单、一票否决列表字段、区域标注建议
 - 审核通过规则：总分 `>=85` 且无一票否决。四维权重为品牌一致性 30、排版规范 30、电商表达 25、交付规范 15。

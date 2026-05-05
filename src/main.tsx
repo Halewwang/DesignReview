@@ -52,7 +52,8 @@ type Task = {
   title: string;
   contentType: ContentType;
   description: string;
-  figmaUrl: string;
+  figmaUrl?: string;
+  source?: "figma" | "upload";
   status: ReviewStatus;
   priority: "普通" | "加急";
   submitterName: string;
@@ -99,6 +100,7 @@ type Detail = {
   rounds?: number[];
   logs: any[];
 };
+type UploadedImageDraft = { id: string; fileName: string; mimeType: string; dataUrl: string; size: number };
 
 const aiRubric = [
   { key: "brand_consistency", label: "品牌一致性", maxScore: 30, definition: "品牌资产、色彩、字体、图片气质是否符合 EMKE warm-minimal 与理性可信赖定位。" },
@@ -151,7 +153,7 @@ function App() {
     <AppErrorBoundary resetKey={`${view}:${activeTaskId ?? ""}`} onDashboard={() => { setView("dashboard"); setActiveTaskId(null); }}>
       <Shell session={session} view={view} onView={setView}>
         {view === "dashboard" && <Dashboard session={session} onNew={() => setView("new")} onOpen={(id) => { setActiveTaskId(id); setView("detail"); }} />}
-        {view === "new" && <NewTask session={session} onBack={() => setView("dashboard")} onFrames={(id) => { setActiveTaskId(id); setView("frames"); }} />}
+        {view === "new" && <NewTask session={session} onBack={() => setView("dashboard")} onFrames={(id) => { setActiveTaskId(id); setView("frames"); }} onDetail={(id) => { setActiveTaskId(id); setView("detail"); }} />}
         {view === "frames" && activeTaskId && <FrameSelection session={session} taskId={activeTaskId} onBack={() => setView("dashboard")} onDetail={() => setView("detail")} />}
         {view === "detail" && activeTaskId && <ReviewDetail session={session} taskId={activeTaskId} onFrames={() => setView("frames")} onDashboard={() => setView("dashboard")} />}
         {view === "vis" && <VisPage session={session} />}
@@ -235,7 +237,7 @@ function Shell({ session, view, onView, children }: { session: Session; view: st
           <button className={view === "vis" ? "active" : ""} onClick={() => onView("vis")}><FileText size={15} /> VIS 标准源</button>
         </nav>
         <div className="sidebar-footer">
-          {session.role === "管理员" ? <button className={`sidebar-link ${view === "settings" ? "active" : ""}`} onClick={() => onView("settings")}><Settings size={15} /> 设置</button> : null}
+          <button className={`sidebar-link ${view === "settings" ? "active" : ""}`} onClick={() => onView("settings")}><Settings size={15} /> 设置</button>
           <div className="sidebar-user"><div className="avatar" title={`${session.role} ${session.name}`}>{avatarText(session.name)}</div><span><strong>{session.name}</strong><small>{session.role}</small></span></div>
         </div>
       </aside>
@@ -400,10 +402,14 @@ function TaskCard({ task, onOpen, compact = false }: { task: Task; onOpen: (id: 
   );
 }
 
-function NewTask({ session, onBack, onFrames }: { session: Session; onBack: () => void; onFrames: (id: string) => void }) {
+function NewTask({ session, onBack, onFrames, onDetail }: { session: Session; onBack: () => void; onFrames: (id: string) => void; onDetail: (id: string) => void }) {
   const [form, setForm] = useState({ title: "", contentType: "官网 Banner" as ContentType, description: "", figmaUrl: "", priority: "普通", submitterId: session.userId ?? session.name });
+  const { data: health } = useApi<any>("/api/health", session, null);
+  const [sourceMode, setSourceMode] = useState<"upload" | "figma">("upload");
+  const [images, setImages] = useState<UploadedImageDraft[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const maxUploadImages = Number(health?.maxUploadImagesPerTask ?? 9);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -411,6 +417,19 @@ function NewTask({ session, onBack, onFrames }: { session: Session; onBack: () =
     setError("");
     let createdTaskId = "";
     try {
+      if (sourceMode === "upload") {
+        if (images.length === 0) throw new Error("请至少上传 1 张图片");
+        if (images.length > maxUploadImages) throw new Error(`单个项目最多上传 ${maxUploadImages} 张图片`);
+        const response = await api<{ task: Task }>("/api/reviews/upload-images", session, {
+          method: "POST",
+          body: {
+            ...form,
+            images: images.map(({ fileName, mimeType, dataUrl }) => ({ fileName, mimeType, dataUrl }))
+          }
+        });
+        onDetail(response.task.id);
+        return;
+      }
       const task = await api<Task>("/api/reviews", session, { method: "POST", body: form });
       createdTaskId = task.id;
       await api(`/api/reviews/${task.id}/read-figma`, session, { method: "POST" });
@@ -421,6 +440,28 @@ function NewTask({ session, onBack, onFrames }: { session: Session; onBack: () =
     } finally {
       setBusy(false);
     }
+  }
+
+  async function pickImages(fileList?: FileList | null) {
+    if (!fileList?.length) return;
+    setError("");
+    try {
+      const files = Array.from(fileList);
+      if (images.length + files.length > maxUploadImages) throw new Error(`单个项目最多上传 ${maxUploadImages} 张图片`);
+      const accepted = files.map((file) => {
+        if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) throw new Error("仅支持 PNG、JPG、WebP 图片");
+        if (file.size > 20 * 1024 * 1024) throw new Error("单张图片不能超过 20MB");
+        return file;
+      });
+      const drafts = await Promise.all(accepted.map(readImageDraft));
+      setImages((current) => [...current, ...drafts]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "图片读取失败");
+    }
+  }
+
+  function removeImage(id: string) {
+    setImages((current) => current.filter((image) => image.id !== id));
   }
 
   return (
@@ -434,6 +475,13 @@ function NewTask({ session, onBack, onFrames }: { session: Session; onBack: () =
       </div>
       <form className="panel form-panel" onSubmit={submit}>
         <label>任务名称<input value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="例如：母亲节官网 Banner 审核" required /></label>
+        <fieldset className="choice-field compact">
+          <legend>提交方式</legend>
+          <div className="choice-group">
+            <button type="button" className={sourceMode === "upload" ? "active" : ""} onClick={() => setSourceMode("upload")}><UploadCloud size={15} /> 上传图片</button>
+            <button type="button" className={sourceMode === "figma" ? "active" : ""} onClick={() => setSourceMode("figma")}><ImageIcon size={15} /> Figma 链接</button>
+          </div>
+        </fieldset>
         <fieldset className="choice-field">
           <legend>内容类型</legend>
           <div className="choice-group">
@@ -443,7 +491,36 @@ function NewTask({ session, onBack, onFrames }: { session: Session; onBack: () =
           </div>
         </fieldset>
         <label>项目说明<textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="使用场景、投放渠道、重点产品卖点" /></label>
-        <label>Figma 项目链接<input value={form.figmaUrl} onChange={(event) => setForm({ ...form, figmaUrl: event.target.value })} placeholder="https://www.figma.com/design/..." required /></label>
+        {sourceMode === "upload" ? (
+          <section className="image-upload-field">
+            <div className="upload-label-row">
+              <span>审核图片</span>
+              <span className={images.length > maxUploadImages ? "error-inline" : "meta"}>{images.length}/{maxUploadImages}</span>
+            </div>
+            <label className="image-dropzone">
+              <UploadCloud size={18} />
+              <span>选择 PNG / JPG / WebP 图片</span>
+              <small>单个项目最多 {maxUploadImages} 张，单张不超过 20MB</small>
+              <input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => { pickImages(event.target.files); event.currentTarget.value = ""; }} />
+            </label>
+            {images.length > 0 && (
+              <div className="upload-preview-grid">
+                {images.map((image) => (
+                  <article className="upload-preview-card" key={image.id}>
+                    <div className="thumb"><img src={image.dataUrl} alt={image.fileName} /></div>
+                    <div>
+                      <strong>{image.fileName}</strong>
+                      <span>{formatFileSize(image.size)}</span>
+                    </div>
+                    <button type="button" className="danger compact icon-only" onClick={() => removeImage(image.id)} aria-label="移除图片" title="移除图片"><Trash2 size={14} /></button>
+                  </article>
+                ))}
+              </div>
+            )}
+          </section>
+        ) : (
+          <label>Figma 项目链接<input value={form.figmaUrl} onChange={(event) => setForm({ ...form, figmaUrl: event.target.value })} placeholder="https://www.figma.com/design/..." required={sourceMode === "figma"} /></label>
+        )}
         <label>提交人 ID<input value={form.submitterId} onChange={(event) => setForm({ ...form, submitterId: event.target.value })} placeholder="用于追踪提交人，例如 EMKE-Hale" /></label>
         <fieldset className="choice-field compact">
           <legend>优先级</legend>
@@ -454,7 +531,7 @@ function NewTask({ session, onBack, onFrames }: { session: Session; onBack: () =
           </div>
         </fieldset>
         {error && <div className="error">{error}</div>}
-        <button className="primary" disabled={busy}>{busy ? "读取 Figma 中..." : "读取 Figma"} <ChevronRight size={16} /></button>
+        <button className="primary" disabled={busy || (sourceMode === "upload" && images.length === 0)}>{busy ? "处理中..." : sourceMode === "upload" ? `创建并 AI 初审 (${images.length})` : "读取 Figma"} <ChevronRight size={16} /></button>
       </form>
     </main>
   );
@@ -709,13 +786,13 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
               {issues.length > 0 && filteredIssues.length === 0 && <div className="lane-empty">当前筛选条件下暂无问题</div>}
             </div>
           </section>
-          <section className="panel log-panel">
-            <div className="panel-head"><h3>提交记录</h3><span>{data.logs.length}</span></div>
-            <div className="log-grid">
-              {data.logs.map((log) => <div className="log" key={log.id}>{log.action}<span>{new Date(log.createdAt).toLocaleString()}</span></div>)}
-            </div>
-          </section>
         </aside>
+        <section className="panel log-panel review-log-panel">
+          <div className="panel-head"><h3>提交记录</h3><span>{data.logs.length}</span></div>
+          <div className="log-grid">
+            {data.logs.map((log) => <div className="log" key={log.id}>{log.action}<span>{new Date(log.createdAt).toLocaleString()}</span></div>)}
+          </div>
+        </section>
       </section>
     </main>
   );
@@ -869,13 +946,15 @@ function VisPage({ session }: { session: Session }) {
           <h2>{data?.fileName ?? "品牌设计规范.md"}</h2>
           <p>AI 初审会把这里的 Markdown 章节作为唯一 VIS 标准源发送给视觉模型，并要求模型逐条理解、引用和应用。</p>
           <div className="source-meta"><span>{data?.path ?? "未加载路径"}</span><span>{data?.sections?.length ?? 0} sections</span></div>
+          <div className="vis-actions">
+            <label className="file-picker">上传标准源<input type="file" accept=".md,.markdown,.txt,text/markdown,text/plain" onChange={(event) => pickFile(event.target.files?.[0])} /></label>
+            <button className="primary" disabled={busy || !draft.trim()} onClick={upload}>{busy ? "分析中..." : "分析标准源"} <UploadCloud size={15} /></button>
+          </div>
         </div>
         <div className="upload-box">
-          <label className="file-picker">上传 Markdown 文件<input type="file" accept=".md,.markdown,.txt,text/markdown,text/plain" onChange={(event) => pickFile(event.target.files?.[0])} /></label>
           <input value={fileName} onChange={(event) => setFileName(event.target.value)} placeholder="文件名" />
           <textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="# EMKE VIS Standard..." />
           {(error || actionError) && <div className="error">{error || actionError}</div>}
-          <button className="primary" disabled={busy || !draft.trim()} onClick={upload}>{busy ? "上传中..." : "保存并应用 VIS 标准源"} <UploadCloud size={15} /></button>
         </div>
       </section>
       <div className="section-list compact-sections">{data?.sections?.map((section: any) => <article className="panel standard-card" key={section.id}><div className="eyebrow">{section.ruleType}</div><h3>{section.title}</h3>{section.content ? <p>{compactPreview(section.content)}</p> : <span className="meta">仅标题章节</span>}</article>)}</div>
@@ -915,6 +994,22 @@ function SettingsPage({ session }: { session: Session }) {
     }
   }
 
+  if (error && error.includes("无权")) {
+    return (
+      <main className="workspace narrow settings-page">
+        <header className="settings-page-head">
+          <div className="eyebrow">SERVER CONFIG</div>
+          <h2>系统设置</h2>
+        </header>
+        <section className="panel form-panel settings-panel">
+          <div className="eyebrow">ACCESS</div>
+          <h3>仅管理员可编辑系统设置</h3>
+          <p className="meta">当前身份：{session.role}。如需修改 AI Key、模型或 VIS 配置，请使用管理员身份进入。</p>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="workspace narrow settings-page">
       <header className="settings-page-head">
@@ -929,6 +1024,7 @@ function SettingsPage({ session }: { session: Session }) {
         <Setting label="AI API Key" value={data?.aiProvider?.configured ? `已配置 ${data?.aiProvider?.keyPreview ?? ""}` : "未配置 Key，本地使用占位审核"} />
         <Setting label="当前来源" value={data?.aiProvider?.source === "env" ? "环境变量" : data?.aiProvider?.source === "runtime" ? "运行时配置" : "系统预设"} />
         <Setting label="最大 Frame 数" value={data?.maxFramesPerTask} />
+        <Setting label="最大上传图片数" value={data?.maxUploadImagesPerTask} />
         <Setting label="VIS 标准源路径" value={data?.brandStandardPath} />
       </section>
       <form className="panel form-panel settings-panel ai-config-form" onSubmit={saveConfig}>
@@ -975,6 +1071,32 @@ function compactPreview(content: string) {
     .slice(0, 132);
 }
 
+function readImageDraft(file: File): Promise<UploadedImageDraft> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("图片读取失败"));
+    reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        reject(new Error("图片读取失败"));
+        return;
+      }
+      resolve({
+        id: `${file.name}_${file.size}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        fileName: file.name,
+        mimeType: file.type,
+        dataUrl: reader.result,
+        size: file.size
+      });
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function formatFileSize(size: number) {
+  if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
 async function api<T>(url: string, session: Session, options: { method?: string; body?: unknown } = {}): Promise<T> {
   const response = await fetch(url, {
     method: options.method ?? "GET",
@@ -1011,4 +1133,6 @@ function useApi<T>(url: string, session: Session, fallback: T) {
   return { data, loading, error, reload };
 }
 
-createRoot(document.getElementById("root")!).render(<App />);
+const rootElement = document.getElementById("root")!;
+const appRoot = ((globalThis as any).__emkeReviewRoot ??= createRoot(rootElement));
+appRoot.render(<App />);

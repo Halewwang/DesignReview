@@ -19,9 +19,10 @@ export type ReviewTask = {
   title: string;
   contentType: ContentType;
   description: string;
-  figmaUrl: string;
+  figmaUrl?: string;
   figmaFileKey?: string;
   figmaFileName?: string;
+  source?: "figma" | "upload";
   status: ReviewStatus;
   priority: "普通" | "加急";
   submitterName: string;

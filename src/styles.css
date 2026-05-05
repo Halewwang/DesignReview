@@ -573,6 +573,105 @@ input:focus, select:focus, textarea:focus { border-color: var(--color-electric-b
 .empty { color: #999; background: #202020; border: 1px solid rgba(255,255,255,.08); border-radius: 8px; padding: 24px; text-align: center; }
 
 .form-panel { padding: 18px; }
+.image-upload-field {
+  display: grid;
+  gap: 10px;
+}
+.upload-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+.error-inline {
+  color: var(--color-tangerine);
+}
+.image-dropzone {
+  min-height: 132px;
+  display: grid;
+  place-items: center;
+  gap: 5px;
+  padding: 18px;
+  color: #fff;
+  text-align: center;
+  background: #202020;
+  border: 1px dashed rgba(255,255,255,.18);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.image-dropzone span {
+  font-weight: 800;
+}
+.image-dropzone small {
+  color: #8b8b8b;
+}
+.image-dropzone input {
+  display: none;
+}
+.upload-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+}
+.upload-preview-card {
+  position: relative;
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+  background: var(--color-surface);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 8px;
+}
+.upload-preview-card .thumb {
+  height: 110px;
+  margin-bottom: 0;
+}
+.upload-preview-card strong,
+.upload-preview-card span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.upload-preview-card strong {
+  color: #fff;
+  font-size: 12px;
+}
+.upload-preview-card span {
+  color: #888;
+  font-size: 11px;
+}
+.upload-preview-card .danger {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+}
+.task-workspace .choice-field legend {
+  margin-bottom: 8px;
+}
+.task-workspace .choice-field.compact legend {
+  margin-bottom: 10px;
+}
+.task-workspace .choice-field.compact .choice-group {
+  width: min(360px, 100%);
+  gap: 0;
+  padding: 3px;
+  background: #101010;
+  border-color: rgba(255,255,255,.14);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.4);
+}
+.task-workspace .choice-field.compact .choice-group button {
+  min-height: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border-radius: 11px;
+}
 .task-workspace {
   display: grid;
   align-content: start;
@@ -956,9 +1055,14 @@ input:focus, select:focus, textarea:focus { border-color: var(--color-electric-b
 .section-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; margin-top: 10px; }
 .vis-source-panel {
   display: grid;
-  grid-template-columns: minmax(0, .8fr) minmax(360px, 1.2fr);
-  gap: 22px;
-  align-items: start;
+  grid-template-columns: minmax(300px, .58fr) minmax(520px, 1.42fr);
+  gap: 28px;
+  align-items: stretch;
+}
+.vis-source-panel > div:first-child {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 .vis-source-panel h2 {
   margin-top: 8px;
@@ -986,12 +1090,30 @@ input:focus, select:focus, textarea:focus { border-color: var(--color-electric-b
 }
 .upload-box {
   display: grid;
-  gap: 8px;
+  gap: 10px;
+  min-width: 0;
 }
 .upload-box textarea {
-  min-height: 300px;
+  min-height: 380px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   line-height: 1.45;
+}
+.vis-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: auto;
+  padding-top: 28px;
+}
+.vis-actions .file-picker,
+.vis-actions .primary {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 42px;
+  padding: 0 16px;
+}
+.vis-actions .primary {
+  margin: 0;
 }
 .file-picker {
   min-height: 40px;
@@ -2948,13 +3070,20 @@ nav button,
   height: auto !important;
 }
 
+.review-log-panel {
+  grid-column: 1 / -1 !important;
+  width: 100% !important;
+  min-height: auto !important;
+  height: auto !important;
+}
+
 .log-panel {
   padding: 16px 18px !important;
 }
 
 .log-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 8px;
   margin-top: 10px;
 }
@@ -3122,6 +3251,27 @@ nav button,
 
 .choice-field.compact .choice-group {
   width: min(380px, 100%) !important;
+}
+
+.task-workspace .choice-field legend {
+  margin-bottom: 10px !important;
+}
+
+.task-workspace .choice-field.compact .choice-group {
+  width: min(360px, 100%) !important;
+  gap: 0 !important;
+  padding: 3px !important;
+  background: #101010 !important;
+  border-color: rgba(255,255,255,.14) !important;
+}
+
+.task-workspace .choice-field.compact .choice-group button {
+  min-height: 46px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 7px !important;
+  border-radius: 11px !important;
 }
 
 .task-workspace .form-panel {

@@ -15,9 +15,12 @@ const designerHeaders = {
 beforeEach(() => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "emke-api-storage-"));
   process.env.REVIEWS_DB_PATH = path.join(tempDir, "reviews.json");
+  process.env.AI_CONFIG_PATH = path.join(tempDir, "ai-config.json");
   delete process.env.DATABASE_URL;
   delete process.env.POSTGRES_URL;
   delete process.env.POSTGRES_PRISMA_URL;
+  delete process.env.AI_PROVIDER_API_KEY;
+  delete process.env.OPENAI_API_KEY;
 });
 
 describe("API validation and health", () => {
@@ -79,6 +82,76 @@ describe("API validation and health", () => {
     expect(response.body.error).toContain("单次最多审核 1 个 Frame");
     if (previous) process.env.MAX_FRAMES_PER_TASK = previous;
     else delete process.env.MAX_FRAMES_PER_TASK;
+  });
+
+  it("creates an upload-based review with selected image frames and AI result", async () => {
+    const response = await request(app)
+      .post("/api/reviews/upload-images")
+      .set(designerHeaders)
+      .send({
+        title: "Upload review",
+        contentType: "官网 Banner",
+        description: "Review uploaded screenshots",
+        priority: "普通",
+        submitterId: "EMKE-Hale",
+        images: [
+          {
+            fileName: "hero.png",
+            mimeType: "image/png",
+            dataUrl: "data:image/png;base64,iVBORw0KGgo="
+          },
+          {
+            fileName: "detail.jpg",
+            mimeType: "image/jpeg",
+            dataUrl: "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
+          }
+        ]
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.task).toMatchObject({
+      title: "Upload review",
+      source: "upload",
+      status: expect.stringMatching(/approved|needs_revision/)
+    });
+    expect(response.body.task).not.toHaveProperty("figmaUrl");
+    expect(response.body.frames).toHaveLength(2);
+    expect(response.body.frames).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          frameName: "hero.png",
+          figmaNodeId: "upload_1",
+          pageName: "上传图片",
+          selected: true,
+          exportedImageUrl: "data:image/png;base64,iVBORw0KGgo="
+        })
+      ])
+    );
+    expect(response.body.result.totalScore).toEqual(expect.any(Number));
+
+    const db = await readDb();
+    expect(db.tasks[0]).toMatchObject({ id: response.body.task.id, source: "upload" });
+    expect(db.frames.filter((frame) => frame.taskId === response.body.task.id)).toHaveLength(2);
+  });
+
+  it("rejects upload-based reviews with more than nine images", async () => {
+    const images = Array.from({ length: 10 }, (_, index) => ({
+      fileName: `image-${index + 1}.png`,
+      mimeType: "image/png",
+      dataUrl: "data:image/png;base64,iVBORw0KGgo="
+    }));
+
+    const response = await request(app)
+      .post("/api/reviews/upload-images")
+      .set(designerHeaders)
+      .send({
+        title: "Too many images",
+        contentType: "官网 Banner",
+        images
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toContain("最多上传 9 张图片");
   });
 });
 

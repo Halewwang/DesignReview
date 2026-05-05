@@ -16,7 +16,7 @@ const port = Number(process.env.API_PORT ?? 8787);
 const accessCode = process.env.REVIEW_ACCESS_CODE ?? "emke.de";
 
 app.use(cors());
-app.use(express.json({ limit: "20mb" }));
+app.use(express.json({ limit: process.env.API_JSON_LIMIT ?? "240mb" }));
 
 function actor(req: express.Request) {
   return {
@@ -52,7 +52,8 @@ app.get("/api/health", async (_req, res) => {
     figmaTokenConfigured: Boolean(process.env.FIGMA_TOKEN),
     aiKeyConfigured: aiProvider.configured,
     aiModel: aiProvider.model,
-    maxFramesPerTask: Number(process.env.MAX_FRAMES_PER_TASK ?? 12)
+    maxFramesPerTask: Number(process.env.MAX_FRAMES_PER_TASK ?? 12),
+    maxUploadImagesPerTask: maxUploadImagesPerTask()
   });
 });
 
@@ -69,6 +70,7 @@ app.get("/api/settings", async (req, res) => {
     aiKeyConfigured: aiProvider.configured,
     aiModel: await getDefaultAiModelAsync(),
     maxFramesPerTask: Number(process.env.MAX_FRAMES_PER_TASK ?? 12),
+    maxUploadImagesPerTask: maxUploadImagesPerTask(),
     brandStandardPath: (await loadBrandStandardAsync()).path,
     storageMode: getStorageMode()
   });
@@ -179,6 +181,7 @@ app.post("/api/reviews", async (req, res) => {
       contentType: req.body.contentType as ContentType,
       description: req.body.description ?? "",
       figmaUrl: req.body.figmaUrl,
+      source: "figma",
       status: "draft",
       priority: req.body.priority ?? "普通",
       submitterName: req.body.submitterName || actorName,
@@ -193,6 +196,86 @@ app.post("/api/reviews", async (req, res) => {
     return created;
   });
   res.json(task);
+});
+
+app.post("/api/reviews/upload-images", async (req, res) => {
+  const { actorName } = actor(req);
+  let taskId = "";
+  try {
+    assertRole(actor(req).actorRole, ["设计师"], "创建图片审核任务");
+    validateCreateUploadTaskInput(req.body);
+    const images = normalizeUploadedImages(req.body.images);
+    const created = await mutateDb((db) => {
+      const task: ReviewTask = {
+        id: uid("task"),
+        title: req.body.title.trim(),
+        contentType: req.body.contentType as ContentType,
+        description: req.body.description ?? "",
+        source: "upload",
+        status: "ai_reviewing",
+        priority: req.body.priority ?? "普通",
+        submitterName: req.body.submitterName || actorName,
+        submitterId: req.body.submitterId || actorName,
+        submitterRole: "设计师",
+        createdAt: now(),
+        updatedAt: now(),
+        submissionRound: 1
+      };
+      const frames: ReviewFrame[] = images.map((image, index) => ({
+        id: `${task.id}_upload_${index + 1}`,
+        taskId: task.id,
+        figmaNodeId: `upload_${index + 1}`,
+        pageName: "上传图片",
+        frameName: image.fileName,
+        width: 0,
+        height: 0,
+        thumbnailUrl: image.dataUrl,
+        exportedImageUrl: image.dataUrl,
+        selected: true,
+        sortOrder: index
+      }));
+      db.tasks.unshift(task);
+      db.frames.push(...frames);
+      db.logs.unshift({ id: uid("log"), taskId: task.id, ...actor(req), action: `上传 ${frames.length} 张图片并创建审核任务`, createdAt: now() });
+      return { task, frames };
+    });
+    taskId = created.task.id;
+
+    const standard = await loadBrandStandardAsync();
+    const sections = parseMarkdownSections(standard.content);
+    const review = await runAiReview({ task: created.task, frames: created.frames, sections, previousIssues: [], standardSource: standard });
+    const resultId = uid("result");
+
+    const saved = await mutateDb((db) => {
+      const task = db.tasks.find((item) => item.id === created.task.id)!;
+      task.status = getAiDecisionStatus(review.total_score, review.veto_issues);
+      task.aiTotalScore = review.total_score;
+      task.updatedAt = now();
+      const result = {
+        id: resultId,
+        taskId: task.id,
+        submissionRound: task.submissionRound,
+        totalScore: review.total_score,
+        conclusion: review.conclusion,
+        dimensionScores: review.dimension_scores as any,
+        rawAiResponse: review,
+        createdAt: now()
+      };
+      db.results.push(result);
+      const frames = db.frames.filter((frame) => frame.taskId === task.id && frame.selected);
+      const issues = review.issues.map((issue: any) => {
+        const frame = frames.find((item) => item.frameName === (issue.frame_name ?? issue.frameName));
+        return toReviewIssue(issue, task.id, resultId, frame, task.submissionRound);
+      });
+      db.issues.push(...issues);
+      db.logs.unshift({ id: uid("log"), taskId: task.id, ...actor(req), action: "完成 AI 初审", createdAt: now() });
+      return { task, frames, result, issues };
+    });
+    res.json(saved);
+  } catch (error) {
+    if (taskId) await setTaskStatus(taskId, "ai_review_failed");
+    res.status(errorStatus(error)).json({ error: errorMessage(error) });
+  }
 });
 
 app.patch("/api/reviews/:id", async (req, res) => {
@@ -260,6 +343,7 @@ app.post("/api/reviews/:id/read-figma", async (req, res) => {
     assertTransition(existing.status, ["draft", "figma_read_failed"], "读取 Figma");
     const task = await setTaskStatus(req.params.id, "figma_reading");
     startedReading = true;
+    if (!task.figmaUrl) throw new Error("任务没有 Figma 项目链接");
     const parsed = parseFigmaUrl(task.figmaUrl);
     const structure = await readFileStructure(parsed.fileKey, task.id);
     const updated = await mutateDb((db) => {
@@ -390,6 +474,7 @@ app.post("/api/reviews/:id/resubmit", async (req, res) => {
       return current;
     });
     startedResubmit = true;
+    if (!task.figmaUrl) throw new Error("任务没有 Figma 项目链接");
     const parsed = parseFigmaUrl(task.figmaUrl);
     const structure = await readFileStructure(parsed.fileKey, task.id);
     const updated = await mutateDb((db) => {
@@ -435,6 +520,31 @@ function validateCreateTaskInput(body: any) {
   parseFigmaUrl(body.figmaUrl);
 }
 
+function validateCreateUploadTaskInput(body: any) {
+  if (typeof body?.title !== "string" || !body.title.trim()) throw new Error("任务名称不能为空");
+  if (!["电商页面", "Amazon A+ 页面", "官网 Banner"].includes(body.contentType)) throw new Error("内容类型不合法");
+  normalizeUploadedImages(body.images);
+}
+
+function maxUploadImagesPerTask() {
+  return Number(process.env.MAX_UPLOAD_IMAGES_PER_TASK ?? 9);
+}
+
+function normalizeUploadedImages(images: any[]) {
+  if (!Array.isArray(images) || images.length === 0) throw new Error("请至少上传 1 张图片");
+  const maxImages = maxUploadImagesPerTask();
+  if (images.length > maxImages) throw new Error(`单个项目最多上传 ${maxImages} 张图片`);
+  return images.map((image, index) => {
+    const fileName = typeof image?.fileName === "string" && image.fileName.trim() ? image.fileName.trim() : `图片 ${index + 1}`;
+    const mimeType = typeof image?.mimeType === "string" ? image.mimeType : "";
+    const dataUrl = typeof image?.dataUrl === "string" ? image.dataUrl : "";
+    if (!["image/png", "image/jpeg", "image/webp"].includes(mimeType)) throw new Error("仅支持 PNG、JPG、WebP 图片");
+    if (!dataUrl.startsWith(`data:${mimeType};base64,`)) throw new Error("图片数据格式不合法");
+    if (dataUrl.length > 28_000_000) throw new Error("单张图片不能超过约 20MB");
+    return { fileName, mimeType, dataUrl };
+  });
+}
+
 function normalizeAiOnlyTask(task: ReviewTask): ReviewTask {
   return { ...task, status: normalizeAiOnlyStatus(task.status, task.aiTotalScore) };
 }
@@ -459,6 +569,7 @@ function errorStatus(error: unknown) {
     message.includes("必须") ||
     message.includes("不能为空") ||
     message.includes("不合法") ||
+    message.includes("图片") ||
     message.includes("请输入") ||
     message.includes("最多")
   ) return 400;
