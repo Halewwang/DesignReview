@@ -383,11 +383,11 @@ function buildPrompt(
     `一票否决：${reviewRubric.vetoIssues.join("、")}。命中时必须加入 veto_issues，即使总分高于 ${reviewRubric.passScore}。`,
     `严重度扣分参考：${JSON.stringify(reviewRubric.severityDeductionGuide)}`,
     `上一轮问题清单：${JSON.stringify(previousIssues)}`,
-    "请使用视觉模型能力直接观察图片区域，对每个明确问题给出可标注位置。",
+    "请使用视觉模型能力直接观察图片区域，对每个明确问题给出可标注位置。坐标必须以对应图片自身左上角为 (0,0)、右下角为 (100,100)，不能按页面留白、浏览器画布或截图外框计算。",
     "total_score 必须等于四个 dimension_scores.*.score 的加总；不要单独估算总分。",
-    "dimension_scores 中每个维度必须包含 deduction_items 数组，逐条列出扣分原因；没有扣分则返回空数组。",
+    "dimension_scores 中每个维度必须包含 deduction_items 数组，逐条列出扣分原因；每条扣分必须写清：具体画面/模块/文字或产品元素、违反的标准点、对业务表达的影响。不要只写“层级不足”“品牌感弱”这类泛化结论；没有扣分则返回空数组。",
     `standard_source 必须返回 file_name=${sourceName}, brand=EMKE, version=${sourceVersion}。`,
-    "输出字段必须包含 total_score, conclusion, standard_source, dimension_scores, veto_issues, issues, revision_comparison。问题必须尽量关联 related_standard_section，并提供 annotation_suggestion 百分比坐标。annotation_suggestion 必须基于图片中实际问题区域，优先使用 rect，x_percent/y_percent/width_percent/height_percent 均为 0-100。"
+    "输出字段必须包含 total_score, conclusion, standard_source, dimension_scores, veto_issues, issues, revision_comparison。问题必须尽量关联 related_standard_section，并提供 annotation_suggestion 百分比坐标。annotation_suggestion 必须框选图片中实际问题区域，优先使用 rect，x_percent/y_percent/width_percent/height_percent 均为 0-100；如果问题对应文字或模块，框选该文字/模块，不要框选整张图或空白区域。"
   ].join("\n\n");
 }
 

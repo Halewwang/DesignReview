@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useMemo, useState } from "react";
+import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   Button as HeroButton,
@@ -638,6 +638,8 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
   const [issueFilters, setIssueFilters] = useState<IssueFilters>({ frameName: "", type: "", severity: "", resolutionStatus: "", mustFixOnly: false });
   const [activeIssueId, setActiveIssueId] = useState("");
   const [error, setError] = useState("");
+  const [resubmitBusy, setResubmitBusy] = useState(false);
+  const uploadResubmitInputRef = useRef<HTMLInputElement>(null);
   const frames = data?.frames.filter((frame) => frame.selected || frame.exportedImageUrl) ?? [];
   const activeFrame = frames.find((frame) => frame.id === activeFrameId) ?? frames[0];
   const rounds = data?.rounds?.length ? data.rounds : data?.results.map((result) => result.submissionRound) ?? [];
@@ -660,6 +662,32 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
       onFrames();
     } catch (err) {
       setError(err instanceof Error ? err.message : "重新提交失败");
+    }
+  }
+
+  async function resubmitUploadedImages(fileList?: FileList | null) {
+    if (!fileList?.length) return;
+    setError("");
+    setResubmitBusy(true);
+    try {
+      const files = Array.from(fileList);
+      if (files.length > 9) throw new Error("单个项目最多上传 9 张图片");
+      const accepted = files.map((file) => {
+        if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) throw new Error("仅支持 PNG、JPG、WebP 图片");
+        if (file.size > 20 * 1024 * 1024) throw new Error("单张图片不能超过 20MB");
+        return file;
+      });
+      const images = await Promise.all(accepted.map(readImageDraft));
+      await api(`/api/reviews/${taskId}/resubmit`, session, {
+        method: "POST",
+        body: { images: images.map(({ fileName, mimeType, dataUrl }) => ({ fileName, mimeType, dataUrl })) }
+      });
+      reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "重新提交失败");
+    } finally {
+      setResubmitBusy(false);
+      if (uploadResubmitInputRef.current) uploadResubmitInputRef.current.value = "";
     }
   }
 
@@ -754,7 +782,12 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
             <div className="frame-tabs">{frames.map((frame) => <button className={activeFrame?.id === frame.id ? "active" : ""} onClick={() => setActiveFrameId(frame.id)} key={frame.id}>{frame.frameName}</button>)}</div>
             <div className="preview-action-row head-actions">
               {editingMeta ? <button className="action-button primary-action" onClick={saveMeta}>保存</button> : <button className="action-button icon-only" onClick={() => setEditingMeta(true)} aria-label="编辑名称 / ID" title="编辑名称 / ID"><Settings size={15} /></button>}
-              {data.task.status === "needs_revision" && <button className="primary" onClick={resubmit}><RefreshCw size={15} /> 重新提交</button>}
+              {data.task.status === "needs_revision" && data.task.source === "upload" ? (
+                <>
+                  <button className="primary" onClick={() => uploadResubmitInputRef.current?.click()} disabled={resubmitBusy}><UploadCloud size={15} /> {resubmitBusy ? "提交中..." : "上传图片重新提交"}</button>
+                  <input ref={uploadResubmitInputRef} className="hidden-file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => resubmitUploadedImages(event.target.files)} />
+                </>
+              ) : data.task.status === "needs_revision" && <button className="primary" onClick={resubmit}><RefreshCw size={15} /> 重新提交</button>}
               {data.task.status === "figma_read_failed" && <button className="primary" onClick={retryReadFigma}><RefreshCw size={15} /> 重新读取 Figma</button>}
               {data.task.status === "ai_review_failed" && <button className="primary" onClick={retryAiReview}><Sparkles size={15} /> 重新 AI 初审</button>}
               {canWithdraw && <button className="action-button icon-only" onClick={withdrawTask} aria-label="撤回" title="撤回"><Undo2 size={15} /></button>}
@@ -770,13 +803,17 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
           </div>
           <div className="image-stage">
             <div className="zoom-canvas" style={{ transform: `scale(${zoom / 100})` }}>
-              {activeFrame?.exportedImageUrl || activeFrame?.thumbnailUrl ? <img src={activeFrame.exportedImageUrl || activeFrame.thumbnailUrl} alt={activeFrame.frameName} /> : <div className="empty">暂无导出图</div>}
-              {visibleAnnotatedIssues.map((issue, index) => <AnnotationBox key={issue.id} issue={issue} index={index + 1} active={issue.id === activeIssueId} onFocus={() => setActiveIssueId(issue.id)} />)}
+              {activeFrame?.exportedImageUrl || activeFrame?.thumbnailUrl ? (
+                <div className="image-frame">
+                  <img src={activeFrame.exportedImageUrl || activeFrame.thumbnailUrl} alt={activeFrame.frameName} />
+                  {visibleAnnotatedIssues.map((issue, index) => <AnnotationBox key={issue.id} issue={issue} index={index + 1} active={issue.id === activeIssueId} onFocus={() => setActiveIssueId(issue.id)} />)}
+                </div>
+              ) : <div className="empty">暂无导出图</div>}
             </div>
           </div>
         </div>
         <aside className="review-sidebar">
-          <ScorePanel result={result} status={data.task.status} />
+          <ScorePanel result={result} status={data.task.status} issues={issues} />
           <section className="panel review-list-panel">
             <div className="panel-head"><h3>问题清单</h3><span>{filteredIssues.length}/{issues.length}</span></div>
             <IssueFilterBar filters={issueFilters} onChange={setIssueFilters} frames={frames} rounds={rounds} selectedRound={selectedRound} onRoundChange={setSelectedRound} />
@@ -845,7 +882,7 @@ function IssueFilterBar({
   );
 }
 
-function ScorePanel({ result, status }: { result: any; status?: ReviewStatus }) {
+function ScorePanel({ result, status, issues = [] }: { result: any; status?: ReviewStatus; issues?: Issue[] }) {
   if (!result) return <section className="panel"><h3>AI 初审</h3><p className="meta">尚无 AI 结果。</p></section>;
   const scores = result.dimensionScores;
   const vetoIssues = result.rawAiResponse?.veto_issues ?? [];
@@ -862,7 +899,29 @@ function ScorePanel({ result, status }: { result: any; status?: ReviewStatus }) 
       <div className="dimension-grid">
         {Object.entries(scores).map(([key, value]: any) => {
           const rubric = aiRubric.find((item) => item.key === key);
-          return <div className="score-line" key={key}><span>{rubric?.label ?? scoreName(key)}</span><b>{value.score}/{value.max_score}</b><p>{rubric?.definition}</p><p>{value.comment}</p>{value.deduction_items?.length ? <ul>{value.deduction_items.map((item: unknown, index: number) => <li key={`${key}-${index}`}>{formatDeductionItem(item)}</li>)}</ul> : <em>无明确扣分项</em>}</div>;
+          const label = rubric?.label ?? scoreName(key);
+          const relatedIssues = issues.filter((issue) => issue.type === label);
+          return (
+            <div className="score-line" key={key}>
+              <span>{label}</span>
+              <b>{value.score}/{value.max_score}</b>
+              <p>{rubric?.definition}</p>
+              <p>{value.comment}</p>
+              {value.deduction_items?.length ? <ul>{value.deduction_items.map((item: unknown, index: number) => <li key={`${key}-${index}`}>{formatDeductionItem(item)}</li>)}</ul> : <em>无明确扣分项</em>}
+              {relatedIssues.length ? (
+                <div className="score-issue-list">
+                  <strong>关联修改项</strong>
+                  {relatedIssues.map((issue) => (
+                    <article key={issue.id}>
+                      <span>{issue.title}</span>
+                      <p>{issue.description}</p>
+                      <em>{issue.suggestion}</em>
+                    </article>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          );
         })}
       </div>
       <div className={`veto-strip ${vetoIssues.length ? "risk" : ""}`}>{vetoIssues.length ? `一票否决风险 ${vetoIssues.length} 项` : "未发现一票否决风险"}</div>

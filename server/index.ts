@@ -459,10 +459,12 @@ app.post("/api/reviews/:id/director-decision", (req, res) => {
 
 app.post("/api/reviews/:id/resubmit", async (req, res) => {
   let startedResubmit = false;
+  let resubmitSource: ReviewTask["source"] | undefined;
   try {
     assertRole(actor(req).actorRole, ["设计师"], "重新提交");
     const existing = await getTask(req.params.id);
     assertTransition(normalizeAiOnlyStatus(existing.status), ["needs_revision"], "重新提交");
+    resubmitSource = existing.source;
     const task = await mutateDb((db) => {
       const current = db.tasks.find((item) => item.id === req.params.id);
       if (!current) throw new Error("任务不存在");
@@ -474,6 +476,66 @@ app.post("/api/reviews/:id/resubmit", async (req, res) => {
       return current;
     });
     startedResubmit = true;
+    if (task.source === "upload") {
+      const images = normalizeUploadedImages(req.body.images);
+      const created = await mutateDb((db) => {
+        const current = db.tasks.find((item) => item.id === task.id)!;
+        current.status = "ai_reviewing";
+        current.updatedAt = now();
+        db.frames = db.frames.filter((frame) => frame.taskId !== task.id);
+        const frames: ReviewFrame[] = images.map((image, index) => ({
+          id: `${task.id}_upload_${task.submissionRound}_${index + 1}`,
+          taskId: task.id,
+          figmaNodeId: `upload_${index + 1}`,
+          pageName: "上传图片",
+          frameName: image.fileName,
+          width: 0,
+          height: 0,
+          thumbnailUrl: image.dataUrl,
+          exportedImageUrl: image.dataUrl,
+          selected: true,
+          sortOrder: index
+        }));
+        db.frames.push(...frames);
+        db.logs.unshift({ id: uid("log"), taskId: task.id, ...actor(req), action: `上传 ${frames.length} 张图片并重新提交`, createdAt: now() });
+        return { task: current, frames };
+      });
+
+      const db = await readDb();
+      const previousRound = getPreviousIssueRound(created.task.submissionRound, db.issues.filter((issue) => issue.taskId === task.id).map((issue) => issue.submissionRound ?? 1));
+      const previousIssues = previousRound ? db.issues.filter((issue) => issue.taskId === task.id && (issue.submissionRound ?? 1) === previousRound) : [];
+      const standard = await loadBrandStandardAsync();
+      const sections = parseMarkdownSections(standard.content);
+      const review = await runAiReview({ task: created.task, frames: created.frames, sections, previousIssues, standardSource: standard });
+      const resultId = uid("result");
+
+      const saved = await mutateDb((db) => {
+        const current = db.tasks.find((item) => item.id === task.id)!;
+        current.status = getAiDecisionStatus(review.total_score, review.veto_issues);
+        current.aiTotalScore = review.total_score;
+        current.updatedAt = now();
+        const result = {
+          id: resultId,
+          taskId: task.id,
+          submissionRound: current.submissionRound,
+          totalScore: review.total_score,
+          conclusion: review.conclusion,
+          dimensionScores: review.dimension_scores as any,
+          rawAiResponse: review,
+          createdAt: now()
+        };
+        db.results.push(result);
+        const frames = db.frames.filter((frame) => frame.taskId === task.id && frame.selected);
+        const issues = review.issues.map((issue: any) => {
+          const frame = frames.find((item) => item.frameName === (issue.frame_name ?? issue.frameName));
+          return toReviewIssue(issue, task.id, resultId, frame, current.submissionRound);
+        });
+        db.issues.push(...issues);
+        db.logs.unshift({ id: uid("log"), taskId: task.id, ...actor(req), action: "完成 AI 初审", createdAt: now() });
+        return { task: current, frames, result, issues };
+      });
+      return res.json(saved);
+    }
     if (!task.figmaUrl) throw new Error("任务没有 Figma 项目链接");
     const parsed = parseFigmaUrl(task.figmaUrl);
     const structure = await readFileStructure(parsed.fileKey, task.id);
@@ -489,7 +551,7 @@ app.post("/api/reviews/:id/resubmit", async (req, res) => {
     });
     res.json({ task: updated, frames: structure.frames });
   } catch (error) {
-    if (startedResubmit) await setTaskStatus(req.params.id, "figma_read_failed");
+    if (startedResubmit) await setTaskStatus(req.params.id, resubmitSource === "upload" ? "ai_review_failed" : "figma_read_failed");
     res.status(errorStatus(error)).json({ error: errorMessage(error) });
   }
 });

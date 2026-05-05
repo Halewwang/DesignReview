@@ -153,6 +153,59 @@ describe("API validation and health", () => {
     expect(response.status).toBe(400);
     expect(response.body.error).toContain("最多上传 9 张图片");
   });
+
+  it("resubmits upload-based reviews with replacement images and a new AI result", async () => {
+    const createResponse = await request(app)
+      .post("/api/reviews/upload-images")
+      .set(designerHeaders)
+      .send({
+        title: "Upload resubmit",
+        contentType: "官网 Banner",
+        images: [
+          {
+            fileName: "round-1.png",
+            mimeType: "image/png",
+            dataUrl: "data:image/png;base64,iVBORw0KGgo="
+          }
+        ]
+      });
+
+    const taskId = createResponse.body.task.id;
+    expect(createResponse.body.task.status).toBe("needs_revision");
+
+    const response = await request(app)
+      .post(`/api/reviews/${taskId}/resubmit`)
+      .set(designerHeaders)
+      .send({
+        images: [
+          {
+            fileName: "round-2.jpg",
+            mimeType: "image/jpeg",
+            dataUrl: "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
+          }
+        ]
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.task).toMatchObject({
+      id: taskId,
+      source: "upload",
+      submissionRound: 2,
+      status: expect.stringMatching(/approved|needs_revision/)
+    });
+    expect(response.body.frames).toHaveLength(1);
+    expect(response.body.frames[0]).toMatchObject({
+      frameName: "round-2.jpg",
+      figmaNodeId: "upload_1",
+      selected: true,
+      exportedImageUrl: "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
+    });
+    expect(response.body.result.submissionRound).toBe(2);
+
+    const db = await readDb();
+    expect(db.results.filter((result) => result.taskId === taskId).map((result) => result.submissionRound)).toEqual([1, 2]);
+    expect(db.frames.filter((frame) => frame.taskId === taskId).map((frame) => frame.frameName)).toEqual(["round-2.jpg"]);
+  });
 });
 
 describe("storage adapter", () => {

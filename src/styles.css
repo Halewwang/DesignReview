@@ -865,6 +865,21 @@ input:focus, select:focus, textarea:focus { border-color: var(--color-electric-b
   transform-origin: top left;
 }
 .zoom-canvas img { display: block; max-width: 100%; max-height: none; border-radius: 8px; }
+.image-frame {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto;
+}
+.image-frame img {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  max-height: none;
+  object-fit: contain;
+  border-radius: 8px;
+}
 .annotation {
   position: absolute;
   border: 2px solid var(--color-electric-blue);
@@ -926,6 +941,33 @@ input:focus, select:focus, textarea:focus { border-color: var(--color-electric-b
   color: #666;
   font-style: normal;
   font-size: 12px;
+}
+.score-issue-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.score-issue-list > strong {
+  color: #fff;
+  font-size: 12px;
+}
+.score-issue-list article {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  background: rgba(255,255,255,.045);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 8px;
+}
+.score-issue-list article span {
+  color: #fff;
+  font-size: 12px;
+  font-weight: 760;
+}
+.score-issue-list article p,
+.score-issue-list article em {
+  margin: 0;
+  line-height: 1.45;
 }
 .veto-strip {
   margin-top: 12px;
@@ -1128,6 +1170,9 @@ input:focus, select:focus, textarea:focus { border-color: var(--color-electric-b
   cursor: pointer;
 }
 .file-picker input {
+  display: none;
+}
+.hidden-file-input {
   display: none;
 }
 .ai-config-form {
@@ -2413,12 +2458,14 @@ nav button,
 }
 
 .zoom-canvas {
-  width: 100%;
-  margin: 0;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto;
 }
 
 .zoom-canvas img {
-  width: 100%;
+  width: auto;
+  max-width: 100%;
   height: auto;
   object-fit: contain;
 }
@@ -2463,8 +2510,9 @@ nav button,
 }
 
 .zoom-canvas img {
-  width: 100%;
-  max-height: 58vh;
+  width: auto;
+  max-width: 100%;
+  max-height: none;
   object-fit: contain;
 }
 
@@ -2546,7 +2594,8 @@ nav button,
 
 .score-line p,
 .score-line ul,
-.score-line > em {
+.score-line > em,
+.score-issue-list {
   grid-column: 1 / -1;
 }
 
