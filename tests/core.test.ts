@@ -6,6 +6,7 @@ import path from "node:path";
 import { loadBrandStandard, parseMarkdownSections, saveUploadedBrandStandard, selectRelevantSections } from "../server/services/vis";
 import { compareIssues, getAiProviderConfig, getDefaultAiModel, normalizeAiReview, saveAiProviderConfig } from "../server/services/aiReview";
 import { decodeHeaderValue, encodeHeaderValue } from "../src/shared/headerEncoding";
+import { formatDeductionItem } from "../src/shared/aiDisplay";
 
 describe("parseFigmaUrl", () => {
   it("extracts file key and node id from design URLs", () => {
@@ -155,5 +156,12 @@ describe("header encoding", () => {
 
     expect(() => new Headers({ "x-actor-role": encoded })).not.toThrow();
     expect(decodeHeaderValue(encoded)).toBe("管理员");
+  });
+});
+
+describe("AI result display helpers", () => {
+  it("formats object deduction items into renderable text", () => {
+    expect(formatDeductionItem({ reason: "缺少 CTA", penalty: 4 })).toBe("缺少 CTA");
+    expect(formatDeductionItem({ field: "color", penalty: 2 })).toBe("field: color；penalty: 2");
   });
 });

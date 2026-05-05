@@ -27,6 +27,7 @@ import {
   UploadCloud,
 } from "lucide-react";
 import "./styles.css";
+import { formatDeductionItem } from "./shared/aiDisplay";
 import { encodeHeaderValue } from "./shared/headerEncoding";
 import { filterIssues, filterTasks, IssueFilters, TaskFilters } from "./shared/filters";
 
@@ -146,15 +147,43 @@ function App() {
 
   if (!session) return <AccessScreen onEnter={setSession} />;
   return (
-    <Shell session={session} view={view} onView={setView}>
-      {view === "dashboard" && <Dashboard session={session} onNew={() => setView("new")} onOpen={(id) => { setActiveTaskId(id); setView("detail"); }} />}
-      {view === "new" && <NewTask session={session} onBack={() => setView("dashboard")} onFrames={(id) => { setActiveTaskId(id); setView("frames"); }} />}
-      {view === "frames" && activeTaskId && <FrameSelection session={session} taskId={activeTaskId} onBack={() => setView("dashboard")} onDetail={() => setView("detail")} />}
-      {view === "detail" && activeTaskId && <ReviewDetail session={session} taskId={activeTaskId} onFrames={() => setView("frames")} onDashboard={() => setView("dashboard")} />}
-      {view === "vis" && <VisPage session={session} />}
-      {view === "settings" && <SettingsPage session={session} />}
-    </Shell>
+    <AppErrorBoundary resetKey={`${view}:${activeTaskId ?? ""}`} onDashboard={() => { setView("dashboard"); setActiveTaskId(null); }}>
+      <Shell session={session} view={view} onView={setView}>
+        {view === "dashboard" && <Dashboard session={session} onNew={() => setView("new")} onOpen={(id) => { setActiveTaskId(id); setView("detail"); }} />}
+        {view === "new" && <NewTask session={session} onBack={() => setView("dashboard")} onFrames={(id) => { setActiveTaskId(id); setView("frames"); }} />}
+        {view === "frames" && activeTaskId && <FrameSelection session={session} taskId={activeTaskId} onBack={() => setView("dashboard")} onDetail={() => setView("detail")} />}
+        {view === "detail" && activeTaskId && <ReviewDetail session={session} taskId={activeTaskId} onFrames={() => setView("frames")} onDashboard={() => setView("dashboard")} />}
+        {view === "vis" && <VisPage session={session} />}
+        {view === "settings" && <SettingsPage session={session} />}
+      </Shell>
+    </AppErrorBoundary>
   );
+}
+
+class AppErrorBoundary extends React.Component<{ children: React.ReactNode; resetKey: string; onDashboard: () => void }, { error: string }> {
+  state = { error: "" };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { error: error instanceof Error ? error.message : "页面渲染失败" };
+  }
+
+  componentDidUpdate(previousProps: { resetKey: string }) {
+    if (previousProps.resetKey !== this.props.resetKey && this.state.error) this.setState({ error: "" });
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+    return (
+      <main className="workspace error-fallback">
+        <section className="panel">
+          <h2>页面显示失败</h2>
+          <p className="meta">当前数据包含无法直接渲染的字段，系统已拦截黑屏。</p>
+          <div className="error">{this.state.error}</div>
+          <button className="primary" onClick={this.props.onDashboard}>返回工作台</button>
+        </section>
+      </main>
+    );
+  }
 }
 
 function AccessScreen({ onEnter }: { onEnter: (session: Session) => void }) {
@@ -745,7 +774,7 @@ function ScorePanel({ result, status }: { result: any; status?: ReviewStatus }) 
       <div className="dimension-grid">
         {Object.entries(scores).map(([key, value]: any) => {
           const rubric = aiRubric.find((item) => item.key === key);
-          return <div className="score-line" key={key}><span>{rubric?.label ?? scoreName(key)}</span><b>{value.score}/{value.max_score}</b><p>{rubric?.definition}</p><p>{value.comment}</p>{value.deduction_items?.length ? <ul>{value.deduction_items.map((item: string) => <li key={item}>{item}</li>)}</ul> : <em>无明确扣分项</em>}</div>;
+          return <div className="score-line" key={key}><span>{rubric?.label ?? scoreName(key)}</span><b>{value.score}/{value.max_score}</b><p>{rubric?.definition}</p><p>{value.comment}</p>{value.deduction_items?.length ? <ul>{value.deduction_items.map((item: unknown, index: number) => <li key={`${key}-${index}`}>{formatDeductionItem(item)}</li>)}</ul> : <em>无明确扣分项</em>}</div>;
         })}
       </div>
       <div className={`veto-strip ${vetoIssues.length ? "risk" : ""}`}>{vetoIssues.length ? `一票否决风险 ${vetoIssues.length} 项` : "未发现一票否决风险"}</div>
