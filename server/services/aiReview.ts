@@ -1,9 +1,9 @@
 import OpenAI from "openai";
 import fs from "node:fs";
 import path from "node:path";
-import { ContentType, DimensionKey, ReviewFrame, ReviewIssue, ReviewTask } from "../types";
-import { readStoreValue, uid, writeStoreValue } from "../db";
-import { selectRelevantSections, VisRuleSection } from "./vis";
+import { ContentType, DimensionKey, ReviewFrame, ReviewIssue, ReviewTask } from "../types.js";
+import { readStoreValue, uid, writeStoreValue } from "../db.js";
+import { selectRelevantSections, VisRuleSection } from "./vis.js";
 
 export const reviewRubric = {
   passScore: 85,

@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { ContentType } from "../types";
-import { getStorageMode, readStoreValue, writeStoreValue } from "../db";
+import { ContentType } from "../types.js";
+import { getStorageMode, readStoreValue, writeStoreValue } from "../db.js";
 
 export type RuleType =
   | "brand"

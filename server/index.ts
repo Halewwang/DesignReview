@@ -1,13 +1,13 @@
 import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
-import { getStorageMode, mutateDb, now, readDb, uid } from "./db";
-import { getFrameImages, parseFigmaUrl, readFileStructure } from "./services/figma";
-import { loadBrandStandardAsync, parseMarkdownSections, saveUploadedBrandStandardAsync } from "./services/vis";
-import { getAiProviderConfig, getAiProviderConfigAsync, getDefaultAiModel, getDefaultAiModelAsync, runAiReview, saveAiProviderConfigAsync, toReviewIssue } from "./services/aiReview";
-import { ContentType, ReviewFrame, ReviewTask, Role } from "./types";
-import { decodeHeaderValue } from "../src/shared/headerEncoding";
-import { assertRole, assertTransition, canDeleteTaskStatus, canWithdrawTaskStatus, getAiDecisionStatus, getPreviousIssueRound } from "./services/workflow";
+import { getStorageMode, mutateDb, now, readDb, uid } from "./db.js";
+import { getFrameImages, parseFigmaUrl, readFileStructure } from "./services/figma.js";
+import { loadBrandStandardAsync, parseMarkdownSections, saveUploadedBrandStandardAsync } from "./services/vis.js";
+import { getAiProviderConfig, getAiProviderConfigAsync, getDefaultAiModel, getDefaultAiModelAsync, runAiReview, saveAiProviderConfigAsync, toReviewIssue } from "./services/aiReview.js";
+import { ContentType, ReviewFrame, ReviewTask, Role } from "./types.js";
+import { decodeHeaderValue } from "../src/shared/headerEncoding.js";
+import { assertRole, assertTransition, canDeleteTaskStatus, canWithdrawTaskStatus, getAiDecisionStatus, getPreviousIssueRound } from "./services/workflow.js";
 
 dotenv.config();
 

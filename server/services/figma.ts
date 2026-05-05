@@ -1,4 +1,4 @@
-import { ReviewFrame } from "../types";
+import { ReviewFrame } from "../types.js";
 
 type FigmaNode = {
   id: string;

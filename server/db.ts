@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import postgres from "postgres";
 import type { Sql } from "postgres";
-import { AuditLog, DirectorDecision, OperationReview, ReviewFrame, ReviewIssue, ReviewResult, ReviewTask } from "./types";
+import { AuditLog, DirectorDecision, OperationReview, ReviewFrame, ReviewIssue, ReviewResult, ReviewTask } from "./types.js";
 
 export type Database = {
   tasks: ReviewTask[];

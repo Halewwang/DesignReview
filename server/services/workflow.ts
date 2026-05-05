@@ -1,4 +1,4 @@
-import { ReviewStatus, Role } from "../types";
+import { ReviewStatus, Role } from "../types.js";
 
 export function assertTransition(current: ReviewStatus, allowed: ReviewStatus[], action: string) {
   if (!allowed.includes(current)) {
