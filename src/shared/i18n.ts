@@ -106,6 +106,8 @@ const exactDynamicTranslations: Record<string, string> = {
 const dynamicPhraseTranslations: Array<[RegExp, string]> = [
   [/^上传 (\d+) 张图片并创建审核任务$/, "Uploaded $1 image(s) and created review task"],
   [/^上传 (\d+) 张图片并重新提交$/, "Uploaded $1 image(s) and resubmitted"],
+  [/^AI 初审失败：(.+)$/, "AI pre-review failed: $1"],
+  [/^Figma 读取失败：(.+)$/, "Figma read failed: $1"],
   [/^选择 (\d+) 个 Frame$/, "Selected $1 Frame(s)"],
   [/^第 (\d+) 轮提交$/, "Round $1 submission"],
   [/画面标注 #(\d+)/g, "canvas annotation #$1"],

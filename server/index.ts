@@ -274,7 +274,7 @@ app.post("/api/reviews/upload-images", async (req, res) => {
     });
     res.json(saved);
   } catch (error) {
-    if (taskId) await setTaskStatus(taskId, "ai_review_failed", "AI 初审失败，可重新发起", req);
+    if (taskId) await setTaskStatus(taskId, "ai_review_failed", `AI 初审失败：${errorMessage(error)}`, req);
     res.status(errorStatus(error)).json({ error: errorMessage(error) });
   }
 });
@@ -400,17 +400,27 @@ app.post("/api/reviews/:id/start-ai-review", async (req, res) => {
     let selectedFrames = db.frames.filter((frame) => frame.taskId === task.id && frame.selected);
     if (selectedFrames.length === 0) return res.status(400).json({ error: "请先选择需要审核的 Frame" });
     if (selectedFrames.length > maxFrames) return res.status(400).json({ error: `单次最多审核 ${maxFrames} 个 Frame` });
-    if (!task.figmaFileKey) return res.status(400).json({ error: "任务尚未读取 Figma 文件" });
 
     await setTaskStatus(task.id, "ai_reviewing", "开始 AI 初审", req);
     startedAiReview = true;
-    const exports = await getFrameImages(task.figmaFileKey, selectedFrames.map((frame) => frame.figmaNodeId), "png", 2);
-    selectedFrames = await mutateDb((currentDb) => {
-      currentDb.frames.forEach((frame) => {
-        if (frame.taskId === task.id && exports[frame.figmaNodeId]) frame.exportedImageUrl = exports[frame.figmaNodeId];
+    if (task.source === "upload") {
+      if (selectedFrames.some((frame) => !frame.exportedImageUrl && !frame.thumbnailUrl)) {
+        throw new Error("上传图片数据缺失，请重新上传图片");
+      }
+      selectedFrames = selectedFrames.map((frame) => ({
+        ...frame,
+        exportedImageUrl: frame.exportedImageUrl || frame.thumbnailUrl
+      }));
+    } else {
+      if (!task.figmaFileKey) return res.status(400).json({ error: "任务尚未读取 Figma 文件" });
+      const exports = await getFrameImages(task.figmaFileKey, selectedFrames.map((frame) => frame.figmaNodeId), "png", 2);
+      selectedFrames = await mutateDb((currentDb) => {
+        currentDb.frames.forEach((frame) => {
+          if (frame.taskId === task.id && exports[frame.figmaNodeId]) frame.exportedImageUrl = exports[frame.figmaNodeId];
+        });
+        return currentDb.frames.filter((frame) => frame.taskId === task.id && frame.selected);
       });
-      return currentDb.frames.filter((frame) => frame.taskId === task.id && frame.selected);
-    });
+    }
 
     const standard = await loadBrandStandardAsync();
     const sections = parseMarkdownSections(standard.content);
@@ -445,7 +455,7 @@ app.post("/api/reviews/:id/start-ai-review", async (req, res) => {
     });
     res.json(saved);
   } catch (error) {
-    if (startedAiReview) await setTaskStatus(req.params.id, "ai_review_failed", "AI 初审失败，可重新发起", req);
+    if (startedAiReview) await setTaskStatus(req.params.id, "ai_review_failed", `AI 初审失败：${errorMessage(error)}`, req);
     res.status(errorStatus(error)).json({ error: errorMessage(error) });
   }
 });
@@ -553,7 +563,7 @@ app.post("/api/reviews/:id/resubmit", async (req, res) => {
     });
     res.json({ task: updated, frames: structure.frames });
   } catch (error) {
-    if (startedResubmit) await setTaskStatus(req.params.id, resubmitSource === "upload" ? "ai_review_failed" : "figma_read_failed", resubmitSource === "upload" ? "AI 初审失败，可重新发起" : "Figma 读取失败", req);
+    if (startedResubmit) await setTaskStatus(req.params.id, resubmitSource === "upload" ? "ai_review_failed" : "figma_read_failed", resubmitSource === "upload" ? `AI 初审失败：${errorMessage(error)}` : `Figma 读取失败：${errorMessage(error)}`, req);
     res.status(errorStatus(error)).json({ error: errorMessage(error) });
   }
 });

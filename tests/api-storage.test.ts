@@ -162,6 +162,48 @@ describe("API validation and health", () => {
     expect(db.logs[0]).toMatchObject({ taskId: "task_stale", action: "AI 初审超时，请刷新后重新发起" });
   });
 
+  it("retries failed upload-based AI reviews without requiring Figma data", async () => {
+    await mutateDb((db) => {
+      db.tasks.push({
+        id: "task_upload_retry",
+        title: "Upload retry",
+        contentType: "Amazon A+ 页面",
+        description: "",
+        source: "upload",
+        status: "ai_review_failed",
+        priority: "普通",
+        submitterName: "Hale",
+        submitterId: "Hale",
+        submitterRole: "设计师",
+        createdAt: "2026-05-13T00:00:00.000Z",
+        updatedAt: "2026-05-13T00:00:00.000Z",
+        submissionRound: 1
+      });
+      db.frames.push({
+        id: "frame_upload_retry",
+        taskId: "task_upload_retry",
+        figmaNodeId: "upload_1",
+        pageName: "上传图片",
+        frameName: "upload.png",
+        width: 0,
+        height: 0,
+        thumbnailUrl: "data:image/png;base64,iVBORw0KGgo=",
+        exportedImageUrl: "data:image/png;base64,iVBORw0KGgo=",
+        selected: true,
+        sortOrder: 0
+      });
+    });
+
+    const response = await request(app)
+      .post("/api/reviews/task_upload_retry/start-ai-review")
+      .set(designerHeaders)
+      .send({});
+
+    expect(response.status).toBe(200);
+    expect(response.body.task.status).toEqual(expect.stringMatching(/approved|needs_revision/));
+    expect(response.body.result.totalScore).toEqual(expect.any(Number));
+  });
+
   it("rejects upload-based reviews with more than nine images", async () => {
     const images = Array.from({ length: 10 }, (_, index) => ({
       fileName: `image-${index + 1}.png`,
