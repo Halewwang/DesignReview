@@ -31,7 +31,7 @@ import { formatDeductionItem } from "./shared/aiDisplay";
 import { encodeHeaderValue } from "./shared/headerEncoding";
 import { filterIssues, filterTasks, IssueFilters, TaskFilters } from "./shared/filters";
 import { scoreTone } from "./shared/scoreDisplay";
-import { detectPreferredLanguage, languageLabel, type Language } from "./shared/i18n";
+import { detectPreferredLanguage, languageLabel, localizeDynamicText, type Language } from "./shared/i18n";
 
 type Role = "设计师" | "运营" | "设计总监" | "管理员";
 type ContentType = "电商页面" | "Amazon A+ 页面" | "官网 Banner";
@@ -290,6 +290,7 @@ type I18nContextValue = {
   setLanguage: (language: Language) => void;
   t: (key: string, values?: Record<string, I18nValue>) => string;
   label: (value: string) => string;
+  dynamic: (value: unknown) => string;
 };
 
 const I18nContext = React.createContext<I18nContextValue | null>(null);
@@ -328,7 +329,8 @@ function App() {
     language,
     setLanguage: setLanguageState,
     t: (key, values) => interpolate(uiCopy[language][key] ?? key, values),
-    label: (value) => languageLabel(language, value)
+    label: (value) => languageLabel(language, value),
+    dynamic: (value) => localizeDynamicText(language, value)
   }), [language]);
 
   const [session, setSession] = useState<Session | null>(() => {
@@ -857,7 +859,7 @@ function FrameSelection({ session, taskId, onBack, onDetail }: { session: Sessio
 }
 
 function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Session; taskId: string; onFrames: () => void; onDashboard: () => void }) {
-  const { t, label } = useI18n();
+  const { t, label, dynamic } = useI18n();
   const { data, error: loadError, reload } = useApi<Detail>(`/api/reviews/${taskId}`, session, null as any);
   const [activeFrameId, setActiveFrameId] = useState("");
   const [zoom, setZoom] = useState(100);
@@ -975,7 +977,7 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
 
   if (!data) return <main className="workspace"><div className="panel">{t("Loading review details...")}</div></main>;
   const canWithdraw = ["frame_selection", "needs_revision", "resubmitted", "figma_read_failed", "ai_review_failed"].includes(data.task.status);
-  const canDelete = ["draft", "frame_selection", "needs_revision", "resubmitted", "approved", "archived", "figma_read_failed", "ai_review_failed"].includes(data.task.status);
+  const canDelete = ["draft", "figma_reading", "frame_selection", "ai_reviewing", "needs_revision", "resubmitted", "approved", "archived", "figma_read_failed", "ai_review_failed"].includes(data.task.status);
 
   return (
     <main className="workspace detail">
@@ -1056,7 +1058,7 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
         <section className="panel log-panel review-log-panel">
           <div className="panel-head"><h3>{t("Submission history")}</h3><span>{data.logs.length}</span></div>
           <div className="log-grid">
-            {data.logs.map((log) => <div className="log" key={log.id}>{log.action}<span>{new Date(log.createdAt).toLocaleString()}</span></div>)}
+            {data.logs.map((log) => <div className="log" key={log.id}>{dynamic(log.action)}<span>{new Date(log.createdAt).toLocaleString()}</span></div>)}
           </div>
         </section>
       </section>
@@ -1113,7 +1115,7 @@ function IssueFilterBar({
 }
 
 function ScorePanel({ result, status, issues = [] }: { result: any; status?: ReviewStatus; issues?: Issue[] }) {
-  const { t, label } = useI18n();
+  const { t, label, dynamic } = useI18n();
   if (!result) return <section className="panel"><h3>{t("AI pre-review")}</h3><p className="meta">{t("No AI result yet.")}</p></section>;
   const scores = result.dimensionScores;
   const vetoIssues = result.rawAiResponse?.veto_issues ?? [];
@@ -1137,16 +1139,16 @@ function ScorePanel({ result, status, issues = [] }: { result: any; status?: Rev
               <span>{label(rawLabel)}</span>
               <b>{value.score}/{value.max_score}</b>
               <p>{rubric?.definition ? t(rubric.definition) : ""}</p>
-              <p>{value.comment}</p>
-              {value.deduction_items?.length ? <ul>{value.deduction_items.map((item: unknown, index: number) => <li key={`${key}-${index}`}>{formatDeductionItem(item)}</li>)}</ul> : <em>{t("No clear deduction items")}</em>}
+              <p>{dynamic(value.comment)}</p>
+              {value.deduction_items?.length ? <ul>{value.deduction_items.map((item: unknown, index: number) => <li key={`${key}-${index}`}>{dynamic(formatDeductionItem(item))}</li>)}</ul> : <em>{t("No clear deduction items")}</em>}
               {relatedIssues.length ? (
                 <div className="score-issue-list">
                   <strong>{t("Related revision items")}</strong>
                   {relatedIssues.map((issue) => (
                     <article key={issue.id}>
-                      <span>{issue.title}</span>
-                      <p>{issue.description}</p>
-                      <em>{issue.suggestion}</em>
+                      <span>{dynamic(issue.title)}</span>
+                      <p>{dynamic(issue.description)}</p>
+                      <em>{dynamic(issue.suggestion)}</em>
                     </article>
                   ))}
                 </div>
@@ -1161,20 +1163,20 @@ function ScorePanel({ result, status, issues = [] }: { result: any; status?: Rev
 }
 
 function IssueCard({ issue, index, annotationIndex, active, onFocus }: { issue: Issue; index: number; annotationIndex?: number; active?: boolean; onFocus?: () => void }) {
-  const { t, label } = useI18n();
+  const { t, label, dynamic } = useI18n();
   return (
     <article className={`issue ${issue.mustFix ? "must" : ""} ${active ? "active" : ""}`} onMouseEnter={onFocus} onFocus={onFocus} onClick={onFocus} tabIndex={0}>
       <div className="issue-top">
         <span className="issue-index">{index}</span>
-        <strong>{issue.title}</strong>
+        <strong>{dynamic(issue.title)}</strong>
         <span className={`severity ${issue.severity}`}>{label(issue.severity)}</span>
       </div>
       <div className="issue-tags"><span>{label(issue.type)}</span>{issue.mustFix ? <span>{t("AI marks must fix")}</span> : <span>{t("AI suggests optimization")}</span>}{annotationIndex ? <span className="annotation-link">{t("Canvas annotation #{index}", { index: annotationIndex })}</span> : <span>{t("No canvas annotation")}</span>}</div>
       <dl>
-        <dt>{t("Location")}</dt><dd>{annotationIndex ? t("See canvas annotation #{index}", { index: annotationIndex }) : (issue.frameName || "--")} · {issue.locationDescription || t("Unspecified area")}</dd>
-        <dt>{t("Judgment")}</dt><dd>{issue.description}</dd>
-        <dt>{t("Revision suggestion")}</dt><dd>{issue.suggestion}</dd>
-        <dt>{t("Basis")}</dt><dd>{issue.relatedStandardSection}</dd>
+        <dt>{t("Location")}</dt><dd>{annotationIndex ? t("See canvas annotation #{index}", { index: annotationIndex }) : (issue.frameName || "--")} · {issue.locationDescription ? dynamic(issue.locationDescription) : t("Unspecified area")}</dd>
+        <dt>{t("Judgment")}</dt><dd>{dynamic(issue.description)}</dd>
+        <dt>{t("Revision suggestion")}</dt><dd>{dynamic(issue.suggestion)}</dd>
+        <dt>{t("Basis")}</dt><dd>{dynamic(issue.relatedStandardSection)}</dd>
       </dl>
     </article>
   );

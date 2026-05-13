@@ -45,7 +45,7 @@ describe("workflow guards", () => {
     expect(canDeleteTaskStatus("draft")).toBe(true);
     expect(canDeleteTaskStatus("frame_selection")).toBe(true);
     expect(canDeleteTaskStatus("needs_revision")).toBe(true);
-    expect(canDeleteTaskStatus("ai_reviewing")).toBe(false);
+    expect(canDeleteTaskStatus("ai_reviewing")).toBe(true);
   });
 });
 

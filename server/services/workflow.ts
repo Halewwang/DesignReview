@@ -28,5 +28,5 @@ export function canWithdrawTaskStatus(status: ReviewStatus) {
 }
 
 export function canDeleteTaskStatus(status: ReviewStatus) {
-  return ["draft", "frame_selection", "needs_revision", "resubmitted", "approved", "figma_read_failed", "ai_review_failed", "archived"].includes(status);
+  return ["draft", "figma_reading", "frame_selection", "ai_reviewing", "needs_revision", "resubmitted", "approved", "figma_read_failed", "ai_review_failed", "archived"].includes(status);
 }
