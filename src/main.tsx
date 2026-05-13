@@ -31,6 +31,7 @@ import { formatDeductionItem } from "./shared/aiDisplay";
 import { encodeHeaderValue } from "./shared/headerEncoding";
 import { filterIssues, filterTasks, IssueFilters, TaskFilters } from "./shared/filters";
 import { scoreTone } from "./shared/scoreDisplay";
+import { detectPreferredLanguage, languageLabel, type Language } from "./shared/i18n";
 
 type Role = "设计师" | "运营" | "设计总监" | "管理员";
 type ContentType = "电商页面" | "Amazon A+ 页面" | "官网 Banner";
@@ -108,23 +109,208 @@ const aiRubric = [
   { key: "ecommerce_expression", label: "电商表达", maxScore: 25, definition: "产品、卖点、证明信息和 CTA 是否帮助用户快速决策。" },
   { key: "delivery_standard", label: "交付规范", maxScore: 15, definition: "尺寸、安全区、文案准确性、素材完整性和导出质量是否达标。" }
 ];
-const passRule = "通过规则：总分 >= 85 且没有一票否决项。";
-
-const statusLabel: Record<ReviewStatus, string> = {
-  draft: "草稿",
-  figma_reading: "读取 Figma 中",
-  frame_selection: "待选择 Frame",
-  ai_reviewing: "AI 初审中",
-  needs_revision: "需修改",
-  resubmitted: "已重新提交",
-  approved: "已通过",
-  archived: "已撤回",
-  figma_read_failed: "Figma 读取失败",
-  ai_review_failed: "AI 审核失败"
-};
 const defaultAccessCode = "emke.de";
+const languageStorageKey = "emke-language";
+
+const uiCopy: Record<Language, Record<string, string>> = {
+  zh: {
+    "Internal design review command center. Use the access code to create tasks, select Frames, and view AI pre-review results.": "内部设计审核工作台。使用访问口令进入后，可创建任务、选择 Frame 并查看 AI 初审结果。",
+    "Access code": "访问口令",
+    "Current role": "当前身份",
+    "Name": "姓名",
+    "Used in activity logs": "用于操作记录",
+    "Enter workspace": "进入工作台",
+    "Page render failed": "页面显示失败",
+    "The current data contains fields that cannot be rendered directly, so the app prevented a blank screen.": "当前数据包含无法直接渲染的字段，系统已拦截黑屏。",
+    "Back to dashboard": "返回工作台",
+    "Menu": "Menu",
+    "Dashboard": "工作台",
+    "VIS source": "VIS 标准源",
+    "Settings": "设置",
+    "Track review queues, AI pre-review results, revision risks, and VIS sources.": "跟踪审核队列、AI 初审结果、修改风险和 VIS 标准源。",
+    "New review task": "新建审核任务",
+    "All tasks": "全部任务",
+    "AI suggests revision": "AI 建议修改",
+    "AI approved": "AI 已通过",
+    "Reviews in progress": "审核进行中",
+    "Failed tasks": "异常任务",
+    "Average AI score": "平均 AI 分",
+    "Review Queue": "Review Queue",
+    "Refresh": "刷新",
+    "Loading tasks...": "读取任务中...",
+    "AI passed": "AI 通过",
+    "In progress": "进行中",
+    "Failed": "异常",
+    "Empty": "暂无",
+    "Filtered results": "筛选结果",
+    "No tasks match the current filters": "当前筛选条件下暂无任务",
+    "No review tasks yet. Create a task and read Figma first.": "暂无审核任务。先新建任务并读取 Figma。",
+    "Search tasks": "搜索任务",
+    "Search task name / Figma file / submitter": "搜索任务名 / Figma 文件 / 提交人",
+    "Content type": "内容类型",
+    "All types": "全部类型",
+    "Task status": "任务状态",
+    "All statuses": "全部状态",
+    "Submitter ID": "提交人 ID",
+    "Reset": "重置",
+    "NEW REVIEW": "NEW REVIEW",
+    "Back": "返回",
+    "Task name": "任务名称",
+    "Example: Mother's Day website banner review": "例如：母亲节官网 Banner 审核",
+    "Submission method": "提交方式",
+    "Upload images": "上传图片",
+    "Figma link": "Figma 链接",
+    "Project notes": "项目说明",
+    "Use case, channel, key product selling points": "使用场景、投放渠道、重点产品卖点",
+    "Review images": "审核图片",
+    "Choose PNG / JPG / WebP images": "选择 PNG / JPG / WebP 图片",
+    "Up to {count} images per task, each no larger than 20MB": "单个项目最多 {count} 张，单张不超过 20MB",
+    "Remove image": "移除图片",
+    "Figma project link": "Figma 项目链接",
+    "Used to track submitters, e.g. EMKE-Hale": "用于追踪提交人，例如 EMKE-Hale",
+    "Priority": "优先级",
+    "Processing...": "处理中...",
+    "Create and AI review ({count})": "创建并 AI 初审 ({count})",
+    "Read Figma": "读取 Figma",
+    "Please upload at least 1 image": "请至少上传 1 张图片",
+    "A task can include at most {count} images": "单个项目最多上传 {count} 张图片",
+    "Only PNG, JPG, and WebP images are supported": "仅支持 PNG、JPG、WebP 图片",
+    "A single image cannot exceed 20MB": "单张图片不能超过 20MB",
+    "Image read failed": "图片读取失败",
+    "Create failed": "创建失败",
+    "Choose Frames to review": "选择需要审核的 Frame",
+    "Only manually selected top-level Frames are exported. Up to {max} per review. Selected {selected}/{max}.": "只导出手动选择的顶层 Frame，单次最多 {max} 个。已选 {selected}/{max}。",
+    "Start AI review ({count})": "开始 AI 初审 ({count})",
+    "The current selection exceeds the limit. Reduce it to {max} Frames or fewer.": "当前选择超过单次上限，请减少到 {max} 个 Frame 以内。",
+    "Select current Page": "全选当前 Page",
+    "Deselect current Page": "取消当前 Page",
+    "No thumbnail": "暂无缩略图",
+    "Retry in {seconds}s": "等待 {seconds}s 后重试",
+    "Reload Figma": "重新读取 Figma",
+    "Reload task": "重新读取任务",
+    "AI pre-review failed": "AI 初审失败",
+    "Figma read failed": "读取 Figma 失败",
+    "Loading review details...": "读取审核详情...",
+    "Round {round} submission": "第 {round} 轮提交",
+    "No project notes": "无项目说明",
+    "Submitter: {name}": "提交人：{name}",
+    "Save": "保存",
+    "Edit name / ID": "编辑名称 / ID",
+    "Submitting...": "提交中...",
+    "Upload images and resubmit": "上传图片重新提交",
+    "Resubmit": "重新提交",
+    "Retry AI review": "重新 AI 初审",
+    "Withdraw": "撤回",
+    "Delete": "删除",
+    "Zoom out": "缩小",
+    "Zoom": "缩放比例",
+    "Zoom in": "放大",
+    "Reset to 100%": "恢复 100%",
+    "No exported image": "暂无导出图",
+    "Issue list": "问题清单",
+    "No issue records yet.": "暂无问题记录。",
+    "No issues match the current filters": "当前筛选条件下暂无问题",
+    "Submission history": "提交记录",
+    "Latest round": "最新轮次",
+    "Round {round}": "第 {round} 轮",
+    "All Frames": "全部 Frame",
+    "All severities": "全部严重度",
+    "All issues": "全部问题",
+    "Must fix": "必须修改",
+    "AI pre-review": "AI 初审",
+    "No AI result yet.": "尚无 AI 结果。",
+    "AI pre-review total score": "AI 初审总分",
+    "Pass rule: total score >= 85 and no veto issues.": "通过规则：总分 >= 85 且没有一票否决项。",
+    "No clear deduction items": "无明确扣分项",
+    "Related revision items": "关联修改项",
+    "Veto risk {count} items": "一票否决风险 {count} 项",
+    "No veto risk found": "未发现一票否决风险",
+    "AI marks must fix": "AI 判定必须修改",
+    "AI suggests optimization": "AI 建议优化",
+    "Canvas annotation #{index}": "画面标注 #{index}",
+    "No canvas annotation": "未生成画面标注",
+    "Location": "位置",
+    "See canvas annotation #{index}": "见画面标注 #{index}",
+    "Unspecified area": "未指定区域",
+    "Judgment": "判断",
+    "Revision suggestion": "修改建议",
+    "Basis": "依据",
+    "STANDARD SOURCE": "STANDARD SOURCE",
+    "The AI pre-review sends these Markdown sections as the only VIS standard source and requires the vision model to understand, cite, and apply them one by one.": "AI 初审会把这里的 Markdown 章节作为唯一 VIS 标准源发送给视觉模型，并要求模型逐条理解、引用和应用。",
+    "Path not loaded": "未加载路径",
+    "Upload standard source": "上传标准源",
+    "Analyzing...": "分析中...",
+    "Analyze standard source": "分析标准源",
+    "File name": "文件名",
+    "Title-only section": "仅标题章节",
+    "SERVER CONFIG": "SERVER CONFIG",
+    "System settings": "系统设置",
+    "ACCESS": "ACCESS",
+    "Only admins can edit system settings": "仅管理员可编辑系统设置",
+    "Current role: {role}. Use an admin role to update AI Key, model, or VIS configuration.": "当前身份：{role}。如需修改 AI Key、模型或 VIS 配置，请使用管理员身份进入。",
+    "Configured": "已配置",
+    "FIGMA_TOKEN not configured": "未配置 FIGMA_TOKEN",
+    "Key not configured, local placeholder review is used": "未配置 Key，本地使用占位审核",
+    "Current source": "当前来源",
+    "Environment variables": "环境变量",
+    "Runtime config": "运行时配置",
+    "System preset": "系统预设",
+    "Max Frame count": "最大 Frame 数",
+    "Max upload image count": "最大上传图片数",
+    "VIS standard source path": "VIS 标准源路径",
+    "AI model endpoint": "AI 模型接口",
+    "Provider name": "Provider 名称",
+    "Model": "模型",
+    "Enter a new Key to save; the full Key will not be shown in the frontend": "输入新 Key 后保存；不会在前端回显完整 Key",
+    "Saving...": "保存中...",
+    "Save AI config": "保存 AI 配置",
+    "Save failed": "保存失败",
+    "Upload failed": "上传失败",
+    "Request failed": "请求失败",
+    "Confirm withdrawing this review task? It will remain recorded but leave the review queue.": "确认撤回这个审核任务？撤回后会保留记录，但不再进入审核队列。",
+    "Withdraw failed": "撤回失败",
+    "Confirm deleting this review task? Related Frames, results, and issues will also be deleted.": "确认删除这个审核任务？相关 Frame、结果和问题记录会一起删除。",
+    "Delete failed": "删除失败",
+    "Resubmit failed": "重新提交失败"
+  },
+  en: {}
+};
+
+uiCopy.en = Object.fromEntries(Object.keys(uiCopy.zh).map((key) => [key, key]));
+Object.assign(uiCopy.en, {
+  "品牌资产、色彩、字体、图片气质是否符合 EMKE warm-minimal 与理性可信赖定位。": "Whether brand assets, colors, typography, and image tone match EMKE's warm-minimal, rational, trustworthy positioning.",
+  "栅格、层级、留白、对齐和阅读路径是否稳定清晰。": "Whether grids, hierarchy, spacing, alignment, and reading flow are stable and clear.",
+  "产品、卖点、证明信息和 CTA 是否帮助用户快速决策。": "Whether products, selling points, proof, and CTAs help users decide quickly.",
+  "尺寸、安全区、文案准确性、素材完整性和导出质量是否达标。": "Whether dimensions, safe areas, copy accuracy, asset completeness, and export quality meet delivery standards."
+});
+
+type I18nValue = string | number;
+type I18nContextValue = {
+  language: Language;
+  setLanguage: (language: Language) => void;
+  t: (key: string, values?: Record<string, I18nValue>) => string;
+  label: (value: string) => string;
+};
+
+const I18nContext = React.createContext<I18nContextValue | null>(null);
+
+function interpolate(text: string, values?: Record<string, I18nValue>) {
+  if (!values) return text;
+  return Object.entries(values).reduce((current, [key, value]) => current.replaceAll(`{${key}}`, String(value)), text);
+}
+
+function useI18n() {
+  const value = React.useContext(I18nContext);
+  if (!value) throw new Error("I18n context is missing");
+  return value;
+}
 
 function App() {
+  const [language, setLanguageState] = useState<Language>(() => {
+    const savedLanguage = localStorage.getItem(languageStorageKey);
+    return detectPreferredLanguage(savedLanguage, navigator.languages?.length ? navigator.languages : [navigator.language].filter(Boolean));
+  });
+
   useEffect(() => {
     document.documentElement.classList.add("dark");
     document.documentElement.setAttribute("data-theme", "dark");
@@ -133,6 +319,17 @@ function App() {
       document.documentElement.removeAttribute("data-theme");
     };
   }, []);
+  useEffect(() => {
+    document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
+    localStorage.setItem(languageStorageKey, language);
+  }, [language]);
+
+  const i18n = useMemo<I18nContextValue>(() => ({
+    language,
+    setLanguage: setLanguageState,
+    t: (key, values) => interpolate(uiCopy[language][key] ?? key, values),
+    label: (value) => languageLabel(language, value)
+  }), [language]);
 
   const [session, setSession] = useState<Session | null>(() => {
     const raw = localStorage.getItem("emke-session");
@@ -148,18 +345,26 @@ function App() {
   const [view, setView] = useState<"dashboard" | "new" | "frames" | "detail" | "vis" | "settings">("dashboard");
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
 
-  if (!session) return <AccessScreen onEnter={setSession} />;
+  if (!session) {
+    return (
+      <I18nContext.Provider value={i18n}>
+        <AccessScreen onEnter={setSession} />
+      </I18nContext.Provider>
+    );
+  }
   return (
-    <AppErrorBoundary resetKey={`${view}:${activeTaskId ?? ""}`} onDashboard={() => { setView("dashboard"); setActiveTaskId(null); }}>
-      <Shell session={session} view={view} onView={setView}>
-        {view === "dashboard" && <Dashboard session={session} onNew={() => setView("new")} onOpen={(id) => { setActiveTaskId(id); setView("detail"); }} />}
-        {view === "new" && <NewTask session={session} onBack={() => setView("dashboard")} onFrames={(id) => { setActiveTaskId(id); setView("frames"); }} onDetail={(id) => { setActiveTaskId(id); setView("detail"); }} />}
-        {view === "frames" && activeTaskId && <FrameSelection session={session} taskId={activeTaskId} onBack={() => setView("dashboard")} onDetail={() => setView("detail")} />}
-        {view === "detail" && activeTaskId && <ReviewDetail session={session} taskId={activeTaskId} onFrames={() => setView("frames")} onDashboard={() => setView("dashboard")} />}
-        {view === "vis" && <VisPage session={session} />}
-        {view === "settings" && <SettingsPage session={session} />}
-      </Shell>
-    </AppErrorBoundary>
+    <I18nContext.Provider value={i18n}>
+      <AppErrorBoundary resetKey={`${view}:${activeTaskId ?? ""}`} onDashboard={() => { setView("dashboard"); setActiveTaskId(null); }}>
+        <Shell session={session} view={view} onView={setView}>
+          {view === "dashboard" && <Dashboard session={session} onNew={() => setView("new")} onOpen={(id) => { setActiveTaskId(id); setView("detail"); }} />}
+          {view === "new" && <NewTask session={session} onBack={() => setView("dashboard")} onFrames={(id) => { setActiveTaskId(id); setView("frames"); }} onDetail={(id) => { setActiveTaskId(id); setView("detail"); }} />}
+          {view === "frames" && activeTaskId && <FrameSelection session={session} taskId={activeTaskId} onBack={() => setView("dashboard")} onDetail={() => setView("detail")} />}
+          {view === "detail" && activeTaskId && <ReviewDetail session={session} taskId={activeTaskId} onFrames={() => setView("frames")} onDashboard={() => setView("dashboard")} />}
+          {view === "vis" && <VisPage session={session} />}
+          {view === "settings" && <SettingsPage session={session} />}
+        </Shell>
+      </AppErrorBoundary>
+    </I18nContext.Provider>
   );
 }
 
@@ -167,7 +372,7 @@ class AppErrorBoundary extends React.Component<{ children: React.ReactNode; rese
   state = { error: "" };
 
   static getDerivedStateFromError(error: unknown) {
-    return { error: error instanceof Error ? error.message : "页面渲染失败" };
+    return { error: error instanceof Error ? error.message : "Page render failed" };
   }
 
   componentDidUpdate(previousProps: { resetKey: string }) {
@@ -177,19 +382,24 @@ class AppErrorBoundary extends React.Component<{ children: React.ReactNode; rese
   render() {
     if (!this.state.error) return this.props.children;
     return (
-      <main className="workspace error-fallback">
-        <section className="panel">
-          <h2>页面显示失败</h2>
-          <p className="meta">当前数据包含无法直接渲染的字段，系统已拦截黑屏。</p>
-          <div className="error">{this.state.error}</div>
-          <button className="primary" onClick={this.props.onDashboard}>返回工作台</button>
-        </section>
-      </main>
+      <I18nContext.Consumer>
+        {(i18n) => (
+          <main className="workspace error-fallback">
+            <section className="panel">
+              <h2>{i18n?.t("Page render failed")}</h2>
+              <p className="meta">{i18n?.t("The current data contains fields that cannot be rendered directly, so the app prevented a blank screen.")}</p>
+              <div className="error">{this.state.error}</div>
+              <button className="primary" onClick={this.props.onDashboard}>{i18n?.t("Back to dashboard")}</button>
+            </section>
+          </main>
+        )}
+      </I18nContext.Consumer>
     );
   }
 }
 
 function AccessScreen({ onEnter }: { onEnter: (session: Session) => void }) {
+  const { t, label } = useI18n();
   const [accessCode, setAccessCode] = useState(defaultAccessCode);
   const [role, setRole] = useState<Role>("设计师");
   const [name, setName] = useState("");
@@ -200,7 +410,7 @@ function AccessScreen({ onEnter }: { onEnter: (session: Session) => void }) {
     setError("");
     const response = await fetch("/api/access", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accessCode }) });
     if (!response.ok) {
-      setError((await response.json()).error ?? "访问失败");
+      setError((await response.json()).error ?? t("Request failed"));
       return;
     }
     const session = { accessCode, role, name: name || role, userId: name || role };
@@ -211,19 +421,21 @@ function AccessScreen({ onEnter }: { onEnter: (session: Session) => void }) {
   return (
     <main className="access-page">
       <form className="access-card" onSubmit={submit}>
+        <div className="access-language"><LanguageSwitcher /></div>
         <h1>EMKE DESIGN REVIEW</h1>
-        <p>内部设计审核工作台。使用访问口令进入后，可创建任务、选择 Frame 并查看 AI 初审结果。</p>
-        <label>访问口令<input type="password" value={accessCode} onChange={(event) => setAccessCode(event.target.value)} placeholder={defaultAccessCode} required /></label>
-        <label>当前身份<select value={role} onChange={(event) => setRole(event.target.value as Role)}><option>设计师</option><option>管理员</option></select></label>
-        <label>姓名<input value={name} onChange={(event) => setName(event.target.value)} placeholder="用于操作记录" required /></label>
+        <p>{t("Internal design review command center. Use the access code to create tasks, select Frames, and view AI pre-review results.")}</p>
+        <label>{t("Access code")}<input type="password" value={accessCode} onChange={(event) => setAccessCode(event.target.value)} placeholder={defaultAccessCode} required /></label>
+        <label>{t("Current role")}<select value={role} onChange={(event) => setRole(event.target.value as Role)}><option value="设计师">{label("设计师")}</option><option value="管理员">{label("管理员")}</option></select></label>
+        <label>{t("Name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("Used in activity logs")} required /></label>
         {error && <div className="error">{error}</div>}
-        <button className="primary access-submit" type="submit">进入工作台 <ChevronRight size={16} /></button>
+        <button className="primary access-submit" type="submit">{t("Enter workspace")} <ChevronRight size={16} /></button>
       </form>
     </main>
   );
 }
 
 function Shell({ session, view, onView, children }: { session: Session; view: string; onView: (view: any) => void; children: React.ReactNode }) {
+  const { t, label } = useI18n();
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -232,13 +444,14 @@ function Shell({ session, view, onView, children }: { session: Session; view: st
           <span><strong>EMKE Review</strong><small>AI Design Audit</small></span>
         </button>
         <nav className="sidebar-nav">
-          <span>Menu</span>
-          <button className={view === "dashboard" ? "active" : ""} onClick={() => onView("dashboard")}><Gauge size={15} /> 工作台</button>
-          <button className={view === "vis" ? "active" : ""} onClick={() => onView("vis")}><FileText size={15} /> VIS 标准源</button>
+          <span>{t("Menu")}</span>
+          <button className={view === "dashboard" ? "active" : ""} onClick={() => onView("dashboard")}><Gauge size={15} /> {t("Dashboard")}</button>
+          <button className={view === "vis" ? "active" : ""} onClick={() => onView("vis")}><FileText size={15} /> {t("VIS source")}</button>
         </nav>
         <div className="sidebar-footer">
-          <button className={`sidebar-link ${view === "settings" ? "active" : ""}`} onClick={() => onView("settings")}><Settings size={15} /> 设置</button>
-          <div className="sidebar-user"><div className="avatar" title={`${session.role} ${session.name}`}>{avatarText(session.name)}</div><span><strong>{session.name}</strong><small>{session.role}</small></span></div>
+          <LanguageSwitcher />
+          <button className={`sidebar-link ${view === "settings" ? "active" : ""}`} onClick={() => onView("settings")}><Settings size={15} /> {t("Settings")}</button>
+          <div className="sidebar-user"><div className="avatar" title={`${label(session.role)} ${session.name}`}>{avatarText(session.name)}</div><span><strong>{session.name}</strong><small>{label(session.role)}</small></span></div>
         </div>
       </aside>
       <section className="app-main">
@@ -248,7 +461,18 @@ function Shell({ session, view, onView, children }: { session: Session; view: st
   );
 }
 
+function LanguageSwitcher() {
+  const { language, setLanguage } = useI18n();
+  return (
+    <div className="language-switcher" aria-label="Language">
+      <button className={language === "zh" ? "active" : ""} type="button" onClick={() => setLanguage("zh")}>中文</button>
+      <button className={language === "en" ? "active" : ""} type="button" onClick={() => setLanguage("en")}>EN</button>
+    </div>
+  );
+}
+
 function Dashboard({ session, onNew, onOpen }: { session: Session; onNew: () => void; onOpen: (id: string) => void }) {
+  const { t } = useI18n();
   const { data: tasks, error, reload, loading } = useApi<Task[]>("/api/reviews", session, []);
   const [filters, setFilters] = useState<TaskFilters>({ contentType: "", status: "", submitterId: "", keyword: "", onlyMine: false });
   const filteredTasks = useMemo(
@@ -264,10 +488,10 @@ function Dashboard({ session, onNew, onOpen }: { session: Session; onNew: () => 
     avgScore: Math.round(tasks.reduce((sum, task) => sum + (task.aiTotalScore ?? 0), 0) / Math.max(1, tasks.filter((task) => task.aiTotalScore).length))
   }), [tasks]);
   const lanes = [
-    { key: "needs_revision", label: "AI 建议修改", tasks: filteredTasks.filter((task) => task.status === "needs_revision") },
-    { key: "approved", label: "AI 通过", tasks: filteredTasks.filter((task) => task.status === "approved") },
-    { key: "in_progress", label: "进行中", tasks: filteredTasks.filter((task) => ["draft", "figma_reading", "frame_selection", "ai_reviewing", "resubmitted"].includes(task.status)) },
-    { key: "failed", label: "异常", tasks: filteredTasks.filter((task) => ["figma_read_failed", "ai_review_failed", "archived"].includes(task.status)) }
+    { key: "needs_revision", label: t("AI suggests revision"), tasks: filteredTasks.filter((task) => task.status === "needs_revision") },
+    { key: "approved", label: t("AI passed"), tasks: filteredTasks.filter((task) => task.status === "approved") },
+    { key: "in_progress", label: t("In progress"), tasks: filteredTasks.filter((task) => ["draft", "figma_reading", "frame_selection", "ai_reviewing", "resubmitted"].includes(task.status)) },
+    { key: "failed", label: t("Failed"), tasks: filteredTasks.filter((task) => ["figma_read_failed", "ai_review_failed", "archived"].includes(task.status)) }
   ];
 
   return (
@@ -275,47 +499,47 @@ function Dashboard({ session, onNew, onOpen }: { session: Session; onNew: () => 
       <section className="hero-row dashboard-hero">
         <div>
           <h1>Hi,{session.name}</h1>
-          <p>跟踪审核队列、AI 初审结果、修改风险和 VIS 标准源。</p>
+          <p>{t("Track review queues, AI pre-review results, revision risks, and VIS sources.")}</p>
         </div>
         <HeroButton variant="primary" className="hero-button" onPress={onNew}>
           <UploadCloud size={16} />
-          新建审核任务
+          {t("New review task")}
         </HeroButton>
       </section>
       <section className="metrics-board">
-        <Metric label="全部任务" value={groups.total} accent="+ live" tone="live" />
-        <Metric label="AI 建议修改" value={groups.revision} accent="- return" tone="revision" />
-        <Metric label="AI 已通过" value={groups.approved} accent="+ pass" tone="success" />
-        <Metric label="审核进行中" value={groups.inProgress} accent="+ queue" tone="queue" />
-        <Metric label="异常任务" value={groups.failed} accent="!" tone="danger" />
-        <Metric label="平均 AI 分" value={Number.isFinite(groups.avgScore) ? groups.avgScore : 0} accent="/100" tone="score" />
+        <Metric label={t("All tasks")} value={groups.total} accent="+ live" tone="live" />
+        <Metric label={t("AI suggests revision")} value={groups.revision} accent="- return" tone="revision" />
+        <Metric label={t("AI approved")} value={groups.approved} accent="+ pass" tone="success" />
+        <Metric label={t("Reviews in progress")} value={groups.inProgress} accent="+ queue" tone="queue" />
+        <Metric label={t("Failed tasks")} value={groups.failed} accent="!" tone="danger" />
+        <Metric label={t("Average AI score")} value={Number.isFinite(groups.avgScore) ? groups.avgScore : 0} accent="/100" tone="score" />
       </section>
       <section className="dashboard-grid">
         <div className="queue-tools">
-          <h2>Review Queue</h2>
-          <HeroButton variant="secondary" className="hero-button subtle" onPress={reload}><RefreshCw size={15} />刷新</HeroButton>
+          <h2>{t("Review Queue")}</h2>
+          <HeroButton variant="secondary" className="hero-button subtle" onPress={reload}><RefreshCw size={15} />{t("Refresh")}</HeroButton>
         </div>
         {error && <div className="error">{error}</div>}
         <TaskFilterBar filters={filters} onChange={setFilters} />
         <div className="queue-board">
-          {loading && <Card className="hero-panel"><Card.Content>读取任务中...</Card.Content></Card>}
+          {loading && <Card className="hero-panel"><Card.Content>{t("Loading tasks...")}</Card.Content></Card>}
           {lanes.map((lane) => (
             <Card className="queue-lane" key={lane.key}>
               <Card.Content className="queue-lane-body">
                 <div className="lane-head"><h3>{lane.label}</h3><Chip size="sm" color="accent" variant="soft">{lane.tasks.length}</Chip></div>
                 {lane.tasks.map((task) => <TaskCard task={task} onOpen={onOpen} key={task.id} />)}
-                {lane.tasks.length === 0 && <div className="lane-empty">暂无</div>}
+                {lane.tasks.length === 0 && <div className="lane-empty">{t("Empty")}</div>}
               </Card.Content>
             </Card>
           ))}
           <Card className="queue-lane wide">
             <Card.Content className="queue-lane-body">
-              <div className="lane-head"><h3>筛选结果</h3><Chip size="sm" color="accent" variant="soft">{filteredTasks.length}</Chip></div>
+              <div className="lane-head"><h3>{t("Filtered results")}</h3><Chip size="sm" color="accent" variant="soft">{filteredTasks.length}</Chip></div>
               {filteredTasks.slice(0, 8).map((task) => <TaskCard task={task} onOpen={onOpen} key={task.id} compact />)}
-              {!loading && filteredTasks.length === 0 && tasks.length > 0 && <div className="lane-empty">当前筛选条件下暂无任务</div>}
+              {!loading && filteredTasks.length === 0 && tasks.length > 0 && <div className="lane-empty">{t("No tasks match the current filters")}</div>}
             </Card.Content>
           </Card>
-          {!loading && tasks.length === 0 && <div className="empty">暂无审核任务。先新建任务并读取 Figma。</div>}
+          {!loading && tasks.length === 0 && <div className="empty">{t("No review tasks yet. Create a task and read Figma first.")}</div>}
         </div>
       </section>
     </main>
@@ -323,6 +547,7 @@ function Dashboard({ session, onNew, onOpen }: { session: Session; onNew: () => 
 }
 
 function TaskFilterBar({ filters, onChange }: { filters: TaskFilters; onChange: (filters: TaskFilters) => void }) {
+  const { t, label } = useI18n();
   const selectedContentType = filters.contentType || "all";
   const selectedStatus = filters.status || "all";
   const nextKey = (value: Key | Key[] | null) => Array.isArray(value) ? value[0] : value;
@@ -330,14 +555,14 @@ function TaskFilterBar({ filters, onChange }: { filters: TaskFilters; onChange: 
     <Card className="filter-bar hero-filter-bar">
       <Card.Content className="task-card-body">
         <Input
-          aria-label="搜索任务"
-          placeholder="搜索任务名 / Figma 文件 / 提交人"
+          aria-label={t("Search tasks")}
+          placeholder={t("Search task name / Figma file / submitter")}
           value={filters.keyword ?? ""}
           onChange={(event) => onChange({ ...filters, keyword: event.target.value })}
           variant="secondary"
         />
         <Select
-          aria-label="内容类型"
+          aria-label={t("Content type")}
           value={selectedContentType}
           onChange={(value) => {
             const key = nextKey(value);
@@ -347,14 +572,14 @@ function TaskFilterBar({ filters, onChange }: { filters: TaskFilters; onChange: 
         >
           <Select.Trigger><Select.Value /></Select.Trigger>
           <Select.Popover><ListBox>
-            <ListBox.Item id="all" textValue="全部类型">全部类型</ListBox.Item>
-            <ListBox.Item id="电商页面" textValue="电商页面">电商页面</ListBox.Item>
-            <ListBox.Item id="Amazon A+ 页面" textValue="Amazon A+ 页面">Amazon A+ 页面</ListBox.Item>
-            <ListBox.Item id="官网 Banner" textValue="官网 Banner">官网 Banner</ListBox.Item>
+            <ListBox.Item id="all" textValue={t("All types")}>{t("All types")}</ListBox.Item>
+            <ListBox.Item id="电商页面" textValue={label("电商页面")}>{label("电商页面")}</ListBox.Item>
+            <ListBox.Item id="Amazon A+ 页面" textValue={label("Amazon A+ 页面")}>{label("Amazon A+ 页面")}</ListBox.Item>
+            <ListBox.Item id="官网 Banner" textValue={label("官网 Banner")}>{label("官网 Banner")}</ListBox.Item>
           </ListBox></Select.Popover>
         </Select>
         <Select
-          aria-label="任务状态"
+          aria-label={t("Task status")}
           value={selectedStatus}
           onChange={(value) => {
             const key = nextKey(value);
@@ -364,37 +589,38 @@ function TaskFilterBar({ filters, onChange }: { filters: TaskFilters; onChange: 
         >
           <Select.Trigger><Select.Value /></Select.Trigger>
           <Select.Popover><ListBox>
-            <ListBox.Item id="all" textValue="全部状态">全部状态</ListBox.Item>
-            <ListBox.Item id="needs_revision" textValue="需修改">需修改</ListBox.Item>
-            <ListBox.Item id="approved" textValue="已通过">已通过</ListBox.Item>
-            <ListBox.Item id="frame_selection" textValue="待选择 Frame">待选择 Frame</ListBox.Item>
-            <ListBox.Item id="ai_reviewing" textValue="AI 审核中">AI 审核中</ListBox.Item>
-            <ListBox.Item id="failed" textValue="失败">失败</ListBox.Item>
+            <ListBox.Item id="all" textValue={t("All statuses")}>{t("All statuses")}</ListBox.Item>
+            <ListBox.Item id="needs_revision" textValue={label("needs_revision")}>{label("needs_revision")}</ListBox.Item>
+            <ListBox.Item id="approved" textValue={label("approved")}>{label("approved")}</ListBox.Item>
+            <ListBox.Item id="frame_selection" textValue={label("frame_selection")}>{label("frame_selection")}</ListBox.Item>
+            <ListBox.Item id="ai_reviewing" textValue={label("ai_reviewing")}>{label("ai_reviewing")}</ListBox.Item>
+            <ListBox.Item id="failed" textValue={label("failed")}>{label("failed")}</ListBox.Item>
           </ListBox></Select.Popover>
         </Select>
         <Input
-          aria-label="提交人 ID"
-          placeholder="提交人 ID"
+          aria-label={t("Submitter ID")}
+          placeholder={t("Submitter ID")}
           value={filters.submitterId ?? ""}
           onChange={(event) => onChange({ ...filters, submitterId: event.target.value })}
           variant="secondary"
         />
-        <HeroButton variant="secondary" className="hero-button subtle" onPress={() => onChange({ ...filters, contentType: "", status: "", submitterId: "", keyword: "" })}>重置</HeroButton>
+        <HeroButton variant="secondary" className="hero-button subtle" onPress={() => onChange({ ...filters, contentType: "", status: "", submitterId: "", keyword: "" })}>{t("Reset")}</HeroButton>
       </Card.Content>
     </Card>
   );
 }
 
 function TaskCard({ task, onOpen, compact = false }: { task: Task; onOpen: (id: string) => void; compact?: boolean }) {
+  const { label } = useI18n();
   return (
     <Card className={`task-card ${compact ? "compact" : ""}`} role="button" tabIndex={0} onClick={() => onOpen(task.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onOpen(task.id); }}>
       <Card.Content className="task-card-body">
         <div className="task-info">
           <div className="task-title">{task.title}</div>
-          <div className="meta">{task.contentType} · {task.submitterName}{task.submitterId ? ` #${task.submitterId}` : ""}</div>
+          <div className="meta">{label(task.contentType)} · {task.submitterName}{task.submitterId ? ` #${task.submitterId}` : ""}</div>
         </div>
         <div className="task-stats">
-          <Chip size="sm" variant="soft" className={`status ${task.status}`}>{statusLabel[task.status]}</Chip>
+          <Chip size="sm" variant="soft" className={`status ${task.status}`}>{label(task.status)}</Chip>
           <span className={`score-chip score-chip--${scoreTone(task.aiTotalScore)}`}>{task.aiTotalScore ?? "--"}</span>
         </div>
       </Card.Content>
@@ -403,6 +629,7 @@ function TaskCard({ task, onOpen, compact = false }: { task: Task; onOpen: (id: 
 }
 
 function NewTask({ session, onBack, onFrames, onDetail }: { session: Session; onBack: () => void; onFrames: (id: string) => void; onDetail: (id: string) => void }) {
+  const { t, label } = useI18n();
   const [form, setForm] = useState({ title: "", contentType: "官网 Banner" as ContentType, description: "", figmaUrl: "", priority: "普通", submitterId: session.userId ?? session.name });
   const { data: health } = useApi<any>("/api/health", session, null);
   const [sourceMode, setSourceMode] = useState<"upload" | "figma">("upload");
@@ -418,8 +645,8 @@ function NewTask({ session, onBack, onFrames, onDetail }: { session: Session; on
     let createdTaskId = "";
     try {
       if (sourceMode === "upload") {
-        if (images.length === 0) throw new Error("请至少上传 1 张图片");
-        if (images.length > maxUploadImages) throw new Error(`单个项目最多上传 ${maxUploadImages} 张图片`);
+        if (images.length === 0) throw new Error(t("Please upload at least 1 image"));
+        if (images.length > maxUploadImages) throw new Error(t("A task can include at most {count} images", { count: maxUploadImages }));
         const response = await api<{ task: Task }>("/api/reviews/upload-images", session, {
           method: "POST",
           body: {
@@ -435,7 +662,7 @@ function NewTask({ session, onBack, onFrames, onDetail }: { session: Session; on
       await api(`/api/reviews/${task.id}/read-figma`, session, { method: "POST" });
       onFrames(task.id);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "创建失败");
+      setError(err instanceof Error ? err.message : t("Create failed"));
       if (createdTaskId) onFrames(createdTaskId);
     } finally {
       setBusy(false);
@@ -447,16 +674,16 @@ function NewTask({ session, onBack, onFrames, onDetail }: { session: Session; on
     setError("");
     try {
       const files = Array.from(fileList);
-      if (images.length + files.length > maxUploadImages) throw new Error(`单个项目最多上传 ${maxUploadImages} 张图片`);
+      if (images.length + files.length > maxUploadImages) throw new Error(t("A task can include at most {count} images", { count: maxUploadImages }));
       const accepted = files.map((file) => {
-        if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) throw new Error("仅支持 PNG、JPG、WebP 图片");
-        if (file.size > 20 * 1024 * 1024) throw new Error("单张图片不能超过 20MB");
+        if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) throw new Error(t("Only PNG, JPG, and WebP images are supported"));
+        if (file.size > 20 * 1024 * 1024) throw new Error(t("A single image cannot exceed 20MB"));
         return file;
       });
-      const drafts = await Promise.all(accepted.map(readImageDraft));
+      const drafts = await Promise.all(accepted.map((file) => readImageDraft(file, t("Image read failed"))));
       setImages((current) => [...current, ...drafts]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "图片读取失败");
+      setError(err instanceof Error ? err.message : t("Image read failed"));
     }
   }
 
@@ -468,39 +695,39 @@ function NewTask({ session, onBack, onFrames, onDetail }: { session: Session; on
     <main className="workspace narrow task-workspace">
       <div className="task-page-top">
         <div className="task-page-title">
-          <div className="eyebrow">NEW REVIEW</div>
-          <h2>新建审核任务</h2>
+          <div className="eyebrow">{t("NEW REVIEW")}</div>
+          <h2>{t("New review task")}</h2>
         </div>
-        <button className="ghost" onClick={onBack}><ArrowLeft size={15} /> 返回</button>
+        <button className="ghost" onClick={onBack}><ArrowLeft size={15} /> {t("Back")}</button>
       </div>
       <form className="panel form-panel" onSubmit={submit}>
-        <label>任务名称<input value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="例如：母亲节官网 Banner 审核" required /></label>
+        <label>{t("Task name")}<input value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder={t("Example: Mother's Day website banner review")} required /></label>
         <fieldset className="choice-field compact">
-          <legend>提交方式</legend>
+          <legend>{t("Submission method")}</legend>
           <div className="choice-group">
-            <button type="button" className={sourceMode === "upload" ? "active" : ""} onClick={() => setSourceMode("upload")}><UploadCloud size={15} /> 上传图片</button>
-            <button type="button" className={sourceMode === "figma" ? "active" : ""} onClick={() => setSourceMode("figma")}><ImageIcon size={15} /> Figma 链接</button>
+            <button type="button" className={sourceMode === "upload" ? "active" : ""} onClick={() => setSourceMode("upload")}><UploadCloud size={15} /> {t("Upload images")}</button>
+            <button type="button" className={sourceMode === "figma" ? "active" : ""} onClick={() => setSourceMode("figma")}><ImageIcon size={15} /> {t("Figma link")}</button>
           </div>
         </fieldset>
         <fieldset className="choice-field">
-          <legend>内容类型</legend>
+          <legend>{t("Content type")}</legend>
           <div className="choice-group">
             {(["电商页面", "Amazon A+ 页面", "官网 Banner"] as ContentType[]).map((contentType) => (
-              <button type="button" className={form.contentType === contentType ? "active" : ""} key={contentType} onClick={() => setForm({ ...form, contentType })}>{contentType}</button>
+              <button type="button" className={form.contentType === contentType ? "active" : ""} key={contentType} onClick={() => setForm({ ...form, contentType })}>{label(contentType)}</button>
             ))}
           </div>
         </fieldset>
-        <label>项目说明<textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder="使用场景、投放渠道、重点产品卖点" /></label>
+        <label>{t("Project notes")}<textarea value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} placeholder={t("Use case, channel, key product selling points")} /></label>
         {sourceMode === "upload" ? (
           <section className="image-upload-field">
             <div className="upload-label-row">
-              <span>审核图片</span>
+              <span>{t("Review images")}</span>
               <span className={images.length > maxUploadImages ? "error-inline" : "meta"}>{images.length}/{maxUploadImages}</span>
             </div>
             <label className="image-dropzone">
               <UploadCloud size={18} />
-              <span>选择 PNG / JPG / WebP 图片</span>
-              <small>单个项目最多 {maxUploadImages} 张，单张不超过 20MB</small>
+              <span>{t("Choose PNG / JPG / WebP images")}</span>
+              <small>{t("Up to {count} images per task, each no larger than 20MB", { count: maxUploadImages })}</small>
               <input type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => { pickImages(event.target.files); event.currentTarget.value = ""; }} />
             </label>
             {images.length > 0 && (
@@ -512,32 +739,33 @@ function NewTask({ session, onBack, onFrames, onDetail }: { session: Session; on
                       <strong>{image.fileName}</strong>
                       <span>{formatFileSize(image.size)}</span>
                     </div>
-                    <button type="button" className="danger compact icon-only" onClick={() => removeImage(image.id)} aria-label="移除图片" title="移除图片"><Trash2 size={14} /></button>
+                    <button type="button" className="danger compact icon-only" onClick={() => removeImage(image.id)} aria-label={t("Remove image")} title={t("Remove image")}><Trash2 size={14} /></button>
                   </article>
                 ))}
               </div>
             )}
           </section>
         ) : (
-          <label>Figma 项目链接<input value={form.figmaUrl} onChange={(event) => setForm({ ...form, figmaUrl: event.target.value })} placeholder="https://www.figma.com/design/..." required={sourceMode === "figma"} /></label>
+          <label>{t("Figma project link")}<input value={form.figmaUrl} onChange={(event) => setForm({ ...form, figmaUrl: event.target.value })} placeholder="https://www.figma.com/design/..." required={sourceMode === "figma"} /></label>
         )}
-        <label>提交人 ID<input value={form.submitterId} onChange={(event) => setForm({ ...form, submitterId: event.target.value })} placeholder="用于追踪提交人，例如 EMKE-Hale" /></label>
+        <label>{t("Submitter ID")}<input value={form.submitterId} onChange={(event) => setForm({ ...form, submitterId: event.target.value })} placeholder={t("Used to track submitters, e.g. EMKE-Hale")} /></label>
         <fieldset className="choice-field compact">
-          <legend>优先级</legend>
+          <legend>{t("Priority")}</legend>
           <div className="choice-group">
             {["普通", "加急"].map((priority) => (
-              <button type="button" className={form.priority === priority ? "active" : ""} key={priority} onClick={() => setForm({ ...form, priority })}>{priority}</button>
+              <button type="button" className={form.priority === priority ? "active" : ""} key={priority} onClick={() => setForm({ ...form, priority })}>{label(priority)}</button>
             ))}
           </div>
         </fieldset>
         {error && <div className="error">{error}</div>}
-        <button className="primary" disabled={busy || (sourceMode === "upload" && images.length === 0)}>{busy ? "处理中..." : sourceMode === "upload" ? `创建并 AI 初审 (${images.length})` : "读取 Figma"} <ChevronRight size={16} /></button>
+        <button className="primary" disabled={busy || (sourceMode === "upload" && images.length === 0)}>{busy ? t("Processing...") : sourceMode === "upload" ? t("Create and AI review ({count})", { count: images.length }) : t("Read Figma")} <ChevronRight size={16} /></button>
       </form>
     </main>
   );
 }
 
 function FrameSelection({ session, taskId, onBack, onDetail }: { session: Session; taskId: string; onBack: () => void; onDetail: () => void }) {
+  const { t } = useI18n();
   const { data, error, reload } = useApi<Detail>(`/api/reviews/${taskId}`, session, null as any);
   const { data: health } = useApi<any>("/api/health", session, null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -563,7 +791,7 @@ function FrameSelection({ session, taskId, onBack, onDetail }: { session: Sessio
       await api(`/api/reviews/${taskId}/start-ai-review`, session, { method: "POST" });
       onDetail();
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "AI 初审失败");
+      setActionError(err instanceof Error ? err.message : t("AI pre-review failed"));
     } finally {
       setBusy(false);
     }
@@ -576,7 +804,7 @@ function FrameSelection({ session, taskId, onBack, onDetail }: { session: Sessio
       await api(`/api/reviews/${taskId}/read-figma`, session, { method: "POST" });
       reload();
     } catch (err) {
-      const message = err instanceof Error ? err.message : "读取 Figma 失败";
+      const message = err instanceof Error ? err.message : t("Figma read failed");
       if (message.includes("Figma API 限流") || message.includes("Rate limit")) setRetryAfter(60);
       setActionError(message);
     } finally {
@@ -601,21 +829,21 @@ function FrameSelection({ session, taskId, onBack, onDetail }: { session: Sessio
   return (
     <main className="workspace">
       <div className="page-head frame-selection-head">
-        <div><h2>选择需要审核的 Frame</h2><p>只导出手动选择的顶层 Frame，单次最多 {maxFrames} 个。已选 {selected.size}/{maxFrames}。</p></div>
+        <div><h2>{t("Choose Frames to review")}</h2><p>{t("Only manually selected top-level Frames are exported. Up to {max} per review. Selected {selected}/{max}.", { max: maxFrames, selected: selected.size })}</p></div>
         <div className="frame-head-actions">
-          <button className="ghost" onClick={onBack}><ArrowLeft size={15} /> 返回</button>
-          <button className="primary" disabled={busy || selected.size === 0 || selected.size > maxFrames} onClick={startAiReview}>{busy ? "处理中..." : `开始 AI 初审 (${selected.size})`} <Sparkles size={16} /></button>
+          <button className="ghost" onClick={onBack}><ArrowLeft size={15} /> {t("Back")}</button>
+          <button className="primary" disabled={busy || selected.size === 0 || selected.size > maxFrames} onClick={startAiReview}>{busy ? t("Processing...") : t("Start AI review ({count})", { count: selected.size })} <Sparkles size={16} /></button>
         </div>
       </div>
-      {selected.size > maxFrames && <div className="error">当前选择超过单次上限，请减少到 {maxFrames} 个 Frame 以内。</div>}
+      {selected.size > maxFrames && <div className="error">{t("The current selection exceeds the limit. Reduce it to {max} Frames or fewer.", { max: maxFrames })}</div>}
       {(error || actionError) && <div className="error">{error || actionError}</div>}
       {pages.map((page) => (
         <section key={page} className="frame-section">
-          <div className="section-bar"><h3>{page}</h3><button className="ghost" onClick={() => togglePage(page)}>{frames.filter((frame) => frame.pageName === page).every((frame) => selected.has(frame.id)) ? "取消当前 Page" : "全选当前 Page"}</button></div>
+          <div className="section-bar"><h3>{page}</h3><button className="ghost" onClick={() => togglePage(page)}>{frames.filter((frame) => frame.pageName === page).every((frame) => selected.has(frame.id)) ? t("Deselect current Page") : t("Select current Page")}</button></div>
           <div className="frame-grid">
             {frames.filter((frame) => frame.pageName === page).map((frame) => (
               <button className={`frame-card ${selected.has(frame.id) ? "selected" : ""}`} key={frame.id} onClick={() => toggle(frame.id)}>
-                <div className="thumb">{frame.thumbnailUrl ? <img src={frame.thumbnailUrl} alt={frame.frameName} /> : <><ImageIcon /><span>暂无缩略图</span></>}</div>
+                <div className="thumb">{frame.thumbnailUrl ? <img src={frame.thumbnailUrl} alt={frame.frameName} /> : <><ImageIcon /><span>{t("No thumbnail")}</span></>}</div>
                 <div className="frame-name">{frame.frameName}</div>
                 <div className="meta">{frame.width} x {frame.height} · {frame.figmaNodeId}</div>
               </button>
@@ -623,12 +851,13 @@ function FrameSelection({ session, taskId, onBack, onDetail }: { session: Sessio
           </div>
         </section>
       ))}
-      {frames.length === 0 && <div className="empty frame-empty">{data?.task?.status === "figma_read_failed" ? <button className="primary" onClick={readFigmaAgain} disabled={busy || retryAfter > 0}>{retryAfter > 0 ? `等待 ${retryAfter}s 后重试` : "重新读取 Figma"}</button> : <button className="primary" onClick={reload}>重新读取任务</button>}</div>}
+      {frames.length === 0 && <div className="empty frame-empty">{data?.task?.status === "figma_read_failed" ? <button className="primary" onClick={readFigmaAgain} disabled={busy || retryAfter > 0}>{retryAfter > 0 ? t("Retry in {seconds}s", { seconds: retryAfter }) : t("Reload Figma")}</button> : <button className="primary" onClick={reload}>{t("Reload task")}</button>}</div>}
     </main>
   );
 }
 
 function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Session; taskId: string; onFrames: () => void; onDashboard: () => void }) {
+  const { t, label } = useI18n();
   const { data, error: loadError, reload } = useApi<Detail>(`/api/reviews/${taskId}`, session, null as any);
   const [activeFrameId, setActiveFrameId] = useState("");
   const [zoom, setZoom] = useState(100);
@@ -661,7 +890,7 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
       await api(`/api/reviews/${taskId}/resubmit`, session, { method: "POST", body: {} });
       onFrames();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "重新提交失败");
+      setError(err instanceof Error ? err.message : t("Resubmit failed"));
     }
   }
 
@@ -671,20 +900,20 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
     setResubmitBusy(true);
     try {
       const files = Array.from(fileList);
-      if (files.length > 9) throw new Error("单个项目最多上传 9 张图片");
+      if (files.length > 9) throw new Error(t("A task can include at most {count} images", { count: 9 }));
       const accepted = files.map((file) => {
-        if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) throw new Error("仅支持 PNG、JPG、WebP 图片");
-        if (file.size > 20 * 1024 * 1024) throw new Error("单张图片不能超过 20MB");
+        if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) throw new Error(t("Only PNG, JPG, and WebP images are supported"));
+        if (file.size > 20 * 1024 * 1024) throw new Error(t("A single image cannot exceed 20MB"));
         return file;
       });
-      const images = await Promise.all(accepted.map(readImageDraft));
+      const images = await Promise.all(accepted.map((file) => readImageDraft(file, t("Image read failed"))));
       await api(`/api/reviews/${taskId}/resubmit`, session, {
         method: "POST",
         body: { images: images.map(({ fileName, mimeType, dataUrl }) => ({ fileName, mimeType, dataUrl })) }
       });
       reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "重新提交失败");
+      setError(err instanceof Error ? err.message : t("Resubmit failed"));
     } finally {
       setResubmitBusy(false);
       if (uploadResubmitInputRef.current) uploadResubmitInputRef.current.value = "";
@@ -697,7 +926,7 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
       await api(`/api/reviews/${taskId}/read-figma`, session, { method: "POST" });
       onFrames();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "读取 Figma 失败");
+      setError(err instanceof Error ? err.message : t("Figma read failed"));
     }
   }
 
@@ -707,7 +936,7 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
       await api(`/api/reviews/${taskId}/start-ai-review`, session, { method: "POST" });
       reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "重新 AI 初审失败");
+      setError(err instanceof Error ? err.message : t("AI pre-review failed"));
     }
   }
 
@@ -718,33 +947,33 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
       setEditingMeta(false);
       reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "保存失败");
+      setError(err instanceof Error ? err.message : t("Save failed"));
     }
   }
 
   async function withdrawTask() {
-    if (!window.confirm("确认撤回这个审核任务？撤回后会保留记录，但不再进入审核队列。")) return;
+    if (!window.confirm(t("Confirm withdrawing this review task? It will remain recorded but leave the review queue."))) return;
     setError("");
     try {
       await api(`/api/reviews/${taskId}/withdraw`, session, { method: "POST" });
       reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "撤回失败");
+      setError(err instanceof Error ? err.message : t("Withdraw failed"));
     }
   }
 
   async function deleteTask() {
-    if (!window.confirm("确认删除这个审核任务？相关 Frame、结果和问题记录会一起删除。")) return;
+    if (!window.confirm(t("Confirm deleting this review task? Related Frames, results, and issues will also be deleted."))) return;
     setError("");
     try {
       await api(`/api/reviews/${taskId}`, session, { method: "DELETE" });
       onDashboard();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "删除失败");
+      setError(err instanceof Error ? err.message : t("Delete failed"));
     }
   }
 
-  if (!data) return <main className="workspace"><div className="panel">读取审核详情...</div></main>;
+  if (!data) return <main className="workspace"><div className="panel">{t("Loading review details...")}</div></main>;
   const canWithdraw = ["frame_selection", "needs_revision", "resubmitted", "figma_read_failed", "ai_review_failed"].includes(data.task.status);
   const canDelete = ["draft", "frame_selection", "needs_revision", "resubmitted", "approved", "archived", "figma_read_failed", "ai_review_failed"].includes(data.task.status);
 
@@ -755,24 +984,24 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
           {editingMeta ? (
             <div className="meta-editor">
               <input value={metaDraft.title} onChange={(event) => setMetaDraft({ ...metaDraft, title: event.target.value })} />
-              <input value={metaDraft.submitterId} onChange={(event) => setMetaDraft({ ...metaDraft, submitterId: event.target.value })} placeholder="提交人 ID" />
+              <input value={metaDraft.submitterId} onChange={(event) => setMetaDraft({ ...metaDraft, submitterId: event.target.value })} placeholder={t("Submitter ID")} />
             </div>
           ) : (
             <>
               <h2>{data.task.title}</h2>
               <div className="detail-meta-grid">
-                <span className="round-badge">第 {data.task.submissionRound} 轮提交</span>
-                <span>{data.task.description || "无项目说明"}</span>
-                <span>提交人：{data.task.submitterName}{data.task.submitterId ? ` · ID ${data.task.submitterId}` : ""}</span>
+                <span className="round-badge">{t("Round {round} submission", { round: data.task.submissionRound })}</span>
+                <span>{data.task.description || t("No project notes")}</span>
+                <span>{t("Submitter: {name}", { name: data.task.submitterName })}{data.task.submitterId ? ` · ID ${data.task.submitterId}` : ""}</span>
               </div>
             </>
           )}
         </div>
         <div className="detail-tag-block">
-          <span className="round-badge">{data.task.contentType}</span>
-          <span>第 {data.task.submissionRound} 轮提交</span>
-          <span>{data.task.description || "无项目说明"}</span>
-          <span>提交人：{data.task.submitterName}{data.task.submitterId ? ` · ID ${data.task.submitterId}` : ""}</span>
+          <span className="round-badge">{label(data.task.contentType)}</span>
+          <span>{t("Round {round} submission", { round: data.task.submissionRound })}</span>
+          <span>{data.task.description || t("No project notes")}</span>
+          <span>{t("Submitter: {name}", { name: data.task.submitterName })}{data.task.submitterId ? ` · ID ${data.task.submitterId}` : ""}</span>
         </div>
       </section>
       {(loadError || error) && <div className="error">{loadError || error}</div>}
@@ -781,24 +1010,24 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
           <div className="preview-toolbar">
             <div className="frame-tabs">{frames.map((frame) => <button className={activeFrame?.id === frame.id ? "active" : ""} onClick={() => setActiveFrameId(frame.id)} key={frame.id}>{frame.frameName}</button>)}</div>
             <div className="preview-action-row head-actions">
-              {editingMeta ? <button className="action-button primary-action" onClick={saveMeta}>保存</button> : <button className="action-button icon-only" onClick={() => setEditingMeta(true)} aria-label="编辑名称 / ID" title="编辑名称 / ID"><Settings size={15} /></button>}
+              {editingMeta ? <button className="action-button primary-action" onClick={saveMeta}>{t("Save")}</button> : <button className="action-button icon-only" onClick={() => setEditingMeta(true)} aria-label={t("Edit name / ID")} title={t("Edit name / ID")}><Settings size={15} /></button>}
               {data.task.status === "needs_revision" && data.task.source === "upload" ? (
                 <>
-                  <button className="primary" onClick={() => uploadResubmitInputRef.current?.click()} disabled={resubmitBusy}><UploadCloud size={15} /> {resubmitBusy ? "提交中..." : "上传图片重新提交"}</button>
+                  <button className="primary" onClick={() => uploadResubmitInputRef.current?.click()} disabled={resubmitBusy}><UploadCloud size={15} /> {resubmitBusy ? t("Submitting...") : t("Upload images and resubmit")}</button>
                   <input ref={uploadResubmitInputRef} className="hidden-file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => resubmitUploadedImages(event.target.files)} />
                 </>
-              ) : data.task.status === "needs_revision" && <button className="primary" onClick={resubmit}><RefreshCw size={15} /> 重新提交</button>}
-              {data.task.status === "figma_read_failed" && <button className="primary" onClick={retryReadFigma}><RefreshCw size={15} /> 重新读取 Figma</button>}
-              {data.task.status === "ai_review_failed" && <button className="primary" onClick={retryAiReview}><Sparkles size={15} /> 重新 AI 初审</button>}
-              {canWithdraw && <button className="action-button icon-only" onClick={withdrawTask} aria-label="撤回" title="撤回"><Undo2 size={15} /></button>}
-              {canDelete && <button className="danger compact icon-only" onClick={deleteTask} aria-label="删除" title="删除"><Trash2 size={15} /></button>}
-              <button className="action-button icon-only" onClick={reload} aria-label="刷新" title="刷新"><RefreshCw size={15} /></button>
+              ) : data.task.status === "needs_revision" && <button className="primary" onClick={resubmit}><RefreshCw size={15} /> {t("Resubmit")}</button>}
+              {data.task.status === "figma_read_failed" && <button className="primary" onClick={retryReadFigma}><RefreshCw size={15} /> {t("Reload Figma")}</button>}
+              {data.task.status === "ai_review_failed" && <button className="primary" onClick={retryAiReview}><Sparkles size={15} /> {t("Retry AI review")}</button>}
+              {canWithdraw && <button className="action-button icon-only" onClick={withdrawTask} aria-label={t("Withdraw")} title={t("Withdraw")}><Undo2 size={15} /></button>}
+              {canDelete && <button className="danger compact icon-only" onClick={deleteTask} aria-label={t("Delete")} title={t("Delete")}><Trash2 size={15} /></button>}
+              <button className="action-button icon-only" onClick={reload} aria-label={t("Refresh")} title={t("Refresh")}><RefreshCw size={15} /></button>
             </div>
             <div className="zoom-controls">
-              <button onClick={() => setZoom(Math.max(50, zoom - 10))} title="缩小"><Minus size={15} /></button>
-              <input aria-label="缩放比例" type="range" min="50" max="220" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} />
-              <button onClick={() => setZoom(Math.min(220, zoom + 10))} title="放大"><Plus size={15} /></button>
-              <button className="zoom-reset" onClick={() => setZoom(100)} title="恢复 100%"><Maximize2 size={15} /><span>{zoom}%</span></button>
+              <button onClick={() => setZoom(Math.max(50, zoom - 10))} title={t("Zoom out")}><Minus size={15} /></button>
+              <input aria-label={t("Zoom")} type="range" min="50" max="220" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} />
+              <button onClick={() => setZoom(Math.min(220, zoom + 10))} title={t("Zoom in")}><Plus size={15} /></button>
+              <button className="zoom-reset" onClick={() => setZoom(100)} title={t("Reset to 100%")}><Maximize2 size={15} /><span>{zoom}%</span></button>
             </div>
           </div>
           <div className="image-stage">
@@ -808,24 +1037,24 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
                   <img src={activeFrame.exportedImageUrl || activeFrame.thumbnailUrl} alt={activeFrame.frameName} />
                   {visibleAnnotatedIssues.map((issue, index) => <AnnotationBox key={issue.id} issue={issue} index={index + 1} active={issue.id === activeIssueId} onFocus={() => setActiveIssueId(issue.id)} />)}
                 </div>
-              ) : <div className="empty">暂无导出图</div>}
+              ) : <div className="empty">{t("No exported image")}</div>}
             </div>
           </div>
         </div>
         <aside className="review-sidebar">
           <ScorePanel result={result} status={data.task.status} issues={issues} />
           <section className="panel review-list-panel">
-            <div className="panel-head"><h3>问题清单</h3><span>{filteredIssues.length}/{issues.length}</span></div>
+            <div className="panel-head"><h3>{t("Issue list")}</h3><span>{filteredIssues.length}/{issues.length}</span></div>
             <IssueFilterBar filters={issueFilters} onChange={setIssueFilters} frames={frames} rounds={rounds} selectedRound={selectedRound} onRoundChange={setSelectedRound} />
             <div className="review-list-scroll">
               {filteredIssues.map((issue, index) => <IssueCard issue={issue} index={index + 1} annotationIndex={annotationIndexByIssueId.get(issue.id)} active={issue.id === activeIssueId} onFocus={() => setActiveIssueId(issue.id)} key={issue.id} />)}
-              {issues.length === 0 && <p className="meta">暂无问题记录。</p>}
-              {issues.length > 0 && filteredIssues.length === 0 && <div className="lane-empty">当前筛选条件下暂无问题</div>}
+              {issues.length === 0 && <p className="meta">{t("No issue records yet.")}</p>}
+              {issues.length > 0 && filteredIssues.length === 0 && <div className="lane-empty">{t("No issues match the current filters")}</div>}
             </div>
           </section>
         </aside>
         <section className="panel log-panel review-log-panel">
-          <div className="panel-head"><h3>提交记录</h3><span>{data.logs.length}</span></div>
+          <div className="panel-head"><h3>{t("Submission history")}</h3><span>{data.logs.length}</span></div>
           <div className="log-grid">
             {data.logs.map((log) => <div className="log" key={log.id}>{log.action}<span>{new Date(log.createdAt).toLocaleString()}</span></div>)}
           </div>
@@ -850,67 +1079,69 @@ function IssueFilterBar({
   selectedRound: number | "latest";
   onRoundChange: (round: number | "latest") => void;
 }) {
+  const { t, label } = useI18n();
   return (
     <section className="issue-filter-bar">
       <select value={selectedRound} onChange={(event) => onRoundChange(event.target.value === "latest" ? "latest" : Number(event.target.value))}>
-        <option value="latest">最新轮次</option>
-        {rounds.map((round) => <option value={round} key={round}>第 {round} 轮</option>)}
+        <option value="latest">{t("Latest round")}</option>
+        {rounds.map((round) => <option value={round} key={round}>{t("Round {round}", { round })}</option>)}
       </select>
       <select value={filters.frameName ?? ""} onChange={(event) => onChange({ ...filters, frameName: event.target.value })}>
-        <option value="">全部 Frame</option>
+        <option value="">{t("All Frames")}</option>
         {frames.map((frame) => <option value={frame.frameName} key={frame.id}>{frame.frameName}</option>)}
       </select>
       <select value={filters.type ?? ""} onChange={(event) => onChange({ ...filters, type: event.target.value })}>
-        <option value="">全部类型</option>
-        <option>品牌一致性</option>
-        <option>排版规范</option>
-        <option>电商表达</option>
-        <option>交付规范</option>
+        <option value="">{t("All types")}</option>
+        <option value="品牌一致性">{label("品牌一致性")}</option>
+        <option value="排版规范">{label("排版规范")}</option>
+        <option value="电商表达">{label("电商表达")}</option>
+        <option value="交付规范">{label("交付规范")}</option>
       </select>
       <select value={filters.severity ?? ""} onChange={(event) => onChange({ ...filters, severity: event.target.value })}>
-        <option value="">全部严重度</option>
-        <option>严重</option>
-        <option>中等</option>
-        <option>轻微</option>
-        <option>建议</option>
+        <option value="">{t("All severities")}</option>
+        <option value="严重">{label("严重")}</option>
+        <option value="中等">{label("中等")}</option>
+        <option value="轻微">{label("轻微")}</option>
+        <option value="建议">{label("建议")}</option>
       </select>
       <div className="segmented">
-        <button className={!filters.mustFixOnly ? "active" : ""} onClick={() => onChange({ ...filters, mustFixOnly: false })}>全部问题</button>
-        <button className={filters.mustFixOnly ? "active" : ""} onClick={() => onChange({ ...filters, mustFixOnly: true })}>必须修改</button>
+        <button className={!filters.mustFixOnly ? "active" : ""} onClick={() => onChange({ ...filters, mustFixOnly: false })}>{t("All issues")}</button>
+        <button className={filters.mustFixOnly ? "active" : ""} onClick={() => onChange({ ...filters, mustFixOnly: true })}>{t("Must fix")}</button>
       </div>
     </section>
   );
 }
 
 function ScorePanel({ result, status, issues = [] }: { result: any; status?: ReviewStatus; issues?: Issue[] }) {
-  if (!result) return <section className="panel"><h3>AI 初审</h3><p className="meta">尚无 AI 结果。</p></section>;
+  const { t, label } = useI18n();
+  if (!result) return <section className="panel"><h3>{t("AI pre-review")}</h3><p className="meta">{t("No AI result yet.")}</p></section>;
   const scores = result.dimensionScores;
   const vetoIssues = result.rawAiResponse?.veto_issues ?? [];
   return (
     <section className="score-panel">
       <div className="score-hero">
         <div className="score-title">
-          <span>AI 初审总分</span>
+          <span>{t("AI pre-review total score")}</span>
         </div>
-        {status ? <span className={`status ${status}`}>{statusLabel[status]}</span> : null}
+        {status ? <span className={`status ${status}`}>{label(status)}</span> : null}
         <strong className={`score-value score-value--${scoreTone(result.totalScore)}`}>{result.totalScore}</strong>
       </div>
-      <p className="rubric-note">{passRule}</p>
+      <p className="rubric-note">{t("Pass rule: total score >= 85 and no veto issues.")}</p>
       <div className="dimension-grid">
         {Object.entries(scores).map(([key, value]: any) => {
           const rubric = aiRubric.find((item) => item.key === key);
-          const label = rubric?.label ?? scoreName(key);
-          const relatedIssues = issues.filter((issue) => issue.type === label);
+          const rawLabel = rubric?.label ?? scoreName(key);
+          const relatedIssues = issues.filter((issue) => issue.type === rawLabel);
           return (
             <div className="score-line" key={key}>
-              <span>{label}</span>
+              <span>{label(rawLabel)}</span>
               <b>{value.score}/{value.max_score}</b>
-              <p>{rubric?.definition}</p>
+              <p>{rubric?.definition ? t(rubric.definition) : ""}</p>
               <p>{value.comment}</p>
-              {value.deduction_items?.length ? <ul>{value.deduction_items.map((item: unknown, index: number) => <li key={`${key}-${index}`}>{formatDeductionItem(item)}</li>)}</ul> : <em>无明确扣分项</em>}
+              {value.deduction_items?.length ? <ul>{value.deduction_items.map((item: unknown, index: number) => <li key={`${key}-${index}`}>{formatDeductionItem(item)}</li>)}</ul> : <em>{t("No clear deduction items")}</em>}
               {relatedIssues.length ? (
                 <div className="score-issue-list">
-                  <strong>关联修改项</strong>
+                  <strong>{t("Related revision items")}</strong>
                   {relatedIssues.map((issue) => (
                     <article key={issue.id}>
                       <span>{issue.title}</span>
@@ -924,25 +1155,26 @@ function ScorePanel({ result, status, issues = [] }: { result: any; status?: Rev
           );
         })}
       </div>
-      <div className={`veto-strip ${vetoIssues.length ? "risk" : ""}`}>{vetoIssues.length ? `一票否决风险 ${vetoIssues.length} 项` : "未发现一票否决风险"}</div>
+      <div className={`veto-strip ${vetoIssues.length ? "risk" : ""}`}>{vetoIssues.length ? t("Veto risk {count} items", { count: vetoIssues.length }) : t("No veto risk found")}</div>
     </section>
   );
 }
 
 function IssueCard({ issue, index, annotationIndex, active, onFocus }: { issue: Issue; index: number; annotationIndex?: number; active?: boolean; onFocus?: () => void }) {
+  const { t, label } = useI18n();
   return (
     <article className={`issue ${issue.mustFix ? "must" : ""} ${active ? "active" : ""}`} onMouseEnter={onFocus} onFocus={onFocus} onClick={onFocus} tabIndex={0}>
       <div className="issue-top">
         <span className="issue-index">{index}</span>
         <strong>{issue.title}</strong>
-        <span className={`severity ${issue.severity}`}>{issue.severity}</span>
+        <span className={`severity ${issue.severity}`}>{label(issue.severity)}</span>
       </div>
-      <div className="issue-tags"><span>{issue.type}</span>{issue.mustFix ? <span>AI 判定必须修改</span> : <span>AI 建议优化</span>}{annotationIndex ? <span className="annotation-link">画面标注 #{annotationIndex}</span> : <span>未生成画面标注</span>}</div>
+      <div className="issue-tags"><span>{label(issue.type)}</span>{issue.mustFix ? <span>{t("AI marks must fix")}</span> : <span>{t("AI suggests optimization")}</span>}{annotationIndex ? <span className="annotation-link">{t("Canvas annotation #{index}", { index: annotationIndex })}</span> : <span>{t("No canvas annotation")}</span>}</div>
       <dl>
-        <dt>位置</dt><dd>{annotationIndex ? `见画面标注 #${annotationIndex}` : (issue.frameName || "--")} · {issue.locationDescription || "未指定区域"}</dd>
-        <dt>判断</dt><dd>{issue.description}</dd>
-        <dt>修改建议</dt><dd>{issue.suggestion}</dd>
-        <dt>依据</dt><dd>{issue.relatedStandardSection}</dd>
+        <dt>{t("Location")}</dt><dd>{annotationIndex ? t("See canvas annotation #{index}", { index: annotationIndex }) : (issue.frameName || "--")} · {issue.locationDescription || t("Unspecified area")}</dd>
+        <dt>{t("Judgment")}</dt><dd>{issue.description}</dd>
+        <dt>{t("Revision suggestion")}</dt><dd>{issue.suggestion}</dd>
+        <dt>{t("Basis")}</dt><dd>{issue.relatedStandardSection}</dd>
       </dl>
     </article>
   );
@@ -965,6 +1197,7 @@ function AnnotationBox({ issue, index, active, onFocus }: { issue: Issue; index:
 }
 
 function VisPage({ session }: { session: Session }) {
+  const { t } = useI18n();
   const { data, error, reload } = useApi<any>("/api/vis/current", session, null);
   const [draft, setDraft] = useState("");
   const [fileName, setFileName] = useState("brand-standard.md");
@@ -991,7 +1224,7 @@ function VisPage({ session }: { session: Session }) {
       await api("/api/vis/current", session, { method: "POST", body: { fileName, content: draft } });
       reload();
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "上传失败");
+      setActionError(err instanceof Error ? err.message : t("Upload failed"));
     } finally {
       setBusy(false);
     }
@@ -1001,27 +1234,28 @@ function VisPage({ session }: { session: Session }) {
     <main className="workspace">
       <section className="panel vis-source-panel">
         <div>
-          <div className="eyebrow">STANDARD SOURCE</div>
+          <div className="eyebrow">{t("STANDARD SOURCE")}</div>
           <h2>{data?.fileName ?? "品牌设计规范.md"}</h2>
-          <p>AI 初审会把这里的 Markdown 章节作为唯一 VIS 标准源发送给视觉模型，并要求模型逐条理解、引用和应用。</p>
-          <div className="source-meta"><span>{data?.path ?? "未加载路径"}</span><span>{data?.sections?.length ?? 0} sections</span></div>
+          <p>{t("The AI pre-review sends these Markdown sections as the only VIS standard source and requires the vision model to understand, cite, and apply them one by one.")}</p>
+          <div className="source-meta"><span>{data?.path ?? t("Path not loaded")}</span><span>{data?.sections?.length ?? 0} sections</span></div>
           <div className="vis-actions">
-            <label className="file-picker">上传标准源<input type="file" accept=".md,.markdown,.txt,text/markdown,text/plain" onChange={(event) => pickFile(event.target.files?.[0])} /></label>
-            <button className="primary" disabled={busy || !draft.trim()} onClick={upload}>{busy ? "分析中..." : "分析标准源"} <UploadCloud size={15} /></button>
+            <label className="file-picker">{t("Upload standard source")}<input type="file" accept=".md,.markdown,.txt,text/markdown,text/plain" onChange={(event) => pickFile(event.target.files?.[0])} /></label>
+            <button className="primary" disabled={busy || !draft.trim()} onClick={upload}>{busy ? t("Analyzing...") : t("Analyze standard source")} <UploadCloud size={15} /></button>
           </div>
         </div>
         <div className="upload-box">
-          <input value={fileName} onChange={(event) => setFileName(event.target.value)} placeholder="文件名" />
+          <input value={fileName} onChange={(event) => setFileName(event.target.value)} placeholder={t("File name")} />
           <textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="# EMKE VIS Standard..." />
           {(error || actionError) && <div className="error">{error || actionError}</div>}
         </div>
       </section>
-      <div className="section-list compact-sections">{data?.sections?.map((section: any) => <article className="panel standard-card" key={section.id}><div className="eyebrow">{section.ruleType}</div><h3>{section.title}</h3>{section.content ? <p>{compactPreview(section.content)}</p> : <span className="meta">仅标题章节</span>}</article>)}</div>
+      <div className="section-list compact-sections">{data?.sections?.map((section: any) => <article className="panel standard-card" key={section.id}><div className="eyebrow">{section.ruleType}</div><h3>{section.title}</h3>{section.content ? <p>{compactPreview(section.content)}</p> : <span className="meta">{t("Title-only section")}</span>}</article>)}</div>
     </main>
   );
 }
 
 function SettingsPage({ session }: { session: Session }) {
+  const { t, label } = useI18n();
   const { data, error, reload } = useApi<any>("/api/settings", session, null);
   const [form, setForm] = useState({ providerName: "Derouter", baseURL: "https://api.derouter.ai/openai/v1", model: "claude-sonnet-4-6", apiKey: "" });
   const [busy, setBusy] = useState(false);
@@ -1047,7 +1281,7 @@ function SettingsPage({ session }: { session: Session }) {
       setForm({ ...form, apiKey: "" });
       reload();
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "保存失败");
+      setActionError(err instanceof Error ? err.message : t("Save failed"));
     } finally {
       setBusy(false);
     }
@@ -1057,13 +1291,13 @@ function SettingsPage({ session }: { session: Session }) {
     return (
       <main className="workspace narrow settings-page">
         <header className="settings-page-head">
-          <div className="eyebrow">SERVER CONFIG</div>
-          <h2>系统设置</h2>
+          <div className="eyebrow">{t("SERVER CONFIG")}</div>
+          <h2>{t("System settings")}</h2>
         </header>
         <section className="panel form-panel settings-panel">
-          <div className="eyebrow">ACCESS</div>
-          <h3>仅管理员可编辑系统设置</h3>
-          <p className="meta">当前身份：{session.role}。如需修改 AI Key、模型或 VIS 配置，请使用管理员身份进入。</p>
+          <div className="eyebrow">{t("ACCESS")}</div>
+          <h3>{t("Only admins can edit system settings")}</h3>
+          <p className="meta">{t("Current role: {role}. Use an admin role to update AI Key, model, or VIS configuration.", { role: label(session.role) })}</p>
         </section>
       </main>
     );
@@ -1072,27 +1306,27 @@ function SettingsPage({ session }: { session: Session }) {
   return (
     <main className="workspace narrow settings-page">
       <header className="settings-page-head">
-        <div className="eyebrow">SERVER CONFIG</div>
-        <h2>系统设置</h2>
+        <div className="eyebrow">{t("SERVER CONFIG")}</div>
+        <h2>{t("System settings")}</h2>
       </header>
       <div className="settings-workspace">
       <section className="panel form-panel settings-panel">
-        <div className="eyebrow">SERVER CONFIG</div>
+        <div className="eyebrow">{t("SERVER CONFIG")}</div>
         {(error || actionError) && <div className="error">{error || actionError}</div>}
-        <Setting label="Figma Token" value={data?.figmaTokenConfigured ? "已配置" : "未配置 FIGMA_TOKEN"} />
-        <Setting label="AI API Key" value={data?.aiProvider?.configured ? `已配置 ${data?.aiProvider?.keyPreview ?? ""}` : "未配置 Key，本地使用占位审核"} />
-        <Setting label="当前来源" value={data?.aiProvider?.source === "env" ? "环境变量" : data?.aiProvider?.source === "runtime" ? "运行时配置" : "系统预设"} />
-        <Setting label="最大 Frame 数" value={data?.maxFramesPerTask} />
-        <Setting label="最大上传图片数" value={data?.maxUploadImagesPerTask} />
-        <Setting label="VIS 标准源路径" value={data?.brandStandardPath} />
+        <Setting label="Figma Token" value={data?.figmaTokenConfigured ? t("Configured") : t("FIGMA_TOKEN not configured")} />
+        <Setting label="AI API Key" value={data?.aiProvider?.configured ? `${t("Configured")} ${data?.aiProvider?.keyPreview ?? ""}` : t("Key not configured, local placeholder review is used")} />
+        <Setting label={t("Current source")} value={data?.aiProvider?.source === "env" ? t("Environment variables") : data?.aiProvider?.source === "runtime" ? t("Runtime config") : t("System preset")} />
+        <Setting label={t("Max Frame count")} value={data?.maxFramesPerTask} />
+        <Setting label={t("Max upload image count")} value={data?.maxUploadImagesPerTask} />
+        <Setting label={t("VIS standard source path")} value={data?.brandStandardPath} />
       </section>
       <form className="panel form-panel settings-panel ai-config-form" onSubmit={saveConfig}>
-        <div className="panel-head"><h3><KeyRound size={15} /> AI 模型接口</h3><span>{data?.aiProvider?.model ?? "--"}</span></div>
-        <label>Provider 名称<input value={form.providerName} onChange={(event) => setForm({ ...form, providerName: event.target.value })} /></label>
+        <div className="panel-head"><h3><KeyRound size={15} /> {t("AI model endpoint")}</h3><span>{data?.aiProvider?.model ?? "--"}</span></div>
+        <label>{t("Provider name")}<input value={form.providerName} onChange={(event) => setForm({ ...form, providerName: event.target.value })} /></label>
         <label>Base URL<input value={form.baseURL} onChange={(event) => setForm({ ...form, baseURL: event.target.value })} /></label>
-        <label>模型<input value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} /></label>
-        <label>API Key<input type="password" value={form.apiKey} onChange={(event) => setForm({ ...form, apiKey: event.target.value })} placeholder="输入新 Key 后保存；不会在前端回显完整 Key" /></label>
-        <button className="primary" disabled={busy}>{busy ? "保存中..." : "保存 AI 配置"}</button>
+        <label>{t("Model")}<input value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} /></label>
+        <label>API Key<input type="password" value={form.apiKey} onChange={(event) => setForm({ ...form, apiKey: event.target.value })} placeholder={t("Enter a new Key to save; the full Key will not be shown in the frontend")} /></label>
+        <button className="primary" disabled={busy}>{busy ? t("Saving...") : t("Save AI config")}</button>
       </form>
       </div>
     </main>
@@ -1130,13 +1364,13 @@ function compactPreview(content: string) {
     .slice(0, 132);
 }
 
-function readImageDraft(file: File): Promise<UploadedImageDraft> {
+function readImageDraft(file: File, errorMessage = "图片读取失败"): Promise<UploadedImageDraft> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error("图片读取失败"));
+    reader.onerror = () => reject(new Error(errorMessage));
     reader.onload = () => {
       if (typeof reader.result !== "string") {
-        reject(new Error("图片读取失败"));
+        reject(new Error(errorMessage));
         return;
       }
       resolve({

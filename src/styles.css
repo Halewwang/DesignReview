@@ -339,6 +339,36 @@ input:focus, select:focus, textarea:focus { border-color: var(--color-electric-b
   padding-top: 12px;
   border-top: 1px solid rgba(255,255,255,.09);
 }
+.language-switcher {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  background: var(--color-surface-raised);
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 8px;
+}
+.language-switcher button {
+  min-height: 30px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--color-ash-gray);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 650;
+}
+.language-switcher button.active,
+.language-switcher button:hover {
+  color: var(--accent-foreground);
+  background: var(--color-electric-blue);
+}
+.access-language {
+  display: flex;
+  justify-content: flex-end;
+}
+.access-language .language-switcher {
+  width: 132px;
+}
 .sidebar-user {
   display: grid;
   grid-template-columns: 34px 1fr;
