@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assertRole, assertTransition, canDeleteTaskStatus, canWithdrawTaskStatus, getAiDecisionStatus, getPreviousIssueRound } from "../server/services/workflow";
-import { normalizeAiReview, reviewRubric } from "../server/services/aiReview";
+import { normalizeAiReview, reviewRubric, toReviewIssue } from "../server/services/aiReview";
 import { filterIssues, filterTasks } from "../src/shared/filters";
 
 const baseTask = {
@@ -74,6 +74,38 @@ describe("AI schema validation", () => {
     });
 
     expect(review.issues[0].annotation_suggestion.confidence).toBe(0.8);
+  });
+
+  it("normalizes alternate AI issue title fields instead of falling back to unnamed issues", () => {
+    const issue = toReviewIssue(
+      {
+        issue_title: "Hero copy readability issue",
+        type: "品牌一致性",
+        severity: "严重",
+        issue_description: "Hero copy has low contrast",
+        revision_suggestion: "Increase contrast"
+      },
+      "task_1",
+      "result_1"
+    );
+
+    expect(issue.title).toBe("Hero copy readability issue");
+    expect(issue.description).toBe("Hero copy has low contrast");
+    expect(issue.suggestion).toBe("Increase contrast");
+  });
+
+  it("derives an issue title from description when AI omits all title fields", () => {
+    const issue = toReviewIssue(
+      {
+        type: "品牌一致性",
+        severity: "中等",
+        description: "右侧上方右卡副copy存在德语语法错误。需要修正。"
+      },
+      "task_1",
+      "result_1"
+    );
+
+    expect(issue.title).toBe("右侧上方右卡副copy存在德语语法错误");
   });
 
   it("rejects invalid AI score and annotation coordinates", () => {

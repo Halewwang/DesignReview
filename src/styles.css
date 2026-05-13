@@ -900,6 +900,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--color-electric-b
   width: fit-content;
   max-width: 100%;
   margin: 0 auto;
+  line-height: 0;
 }
 .image-frame img {
   display: block;
@@ -909,6 +910,13 @@ input:focus, select:focus, textarea:focus { border-color: var(--color-electric-b
   max-height: none;
   object-fit: contain;
   border-radius: 8px;
+}
+.annotation-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
 .annotation {
   position: absolute;
@@ -3210,6 +3218,7 @@ nav button,
 
 .annotation-pin {
   position: absolute;
+  pointer-events: auto;
   z-index: 4;
   width: 26px;
   height: 26px;

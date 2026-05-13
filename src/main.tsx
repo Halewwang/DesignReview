@@ -31,7 +31,7 @@ import { formatDeductionItem } from "./shared/aiDisplay";
 import { encodeHeaderValue } from "./shared/headerEncoding";
 import { filterIssues, filterTasks, IssueFilters, TaskFilters } from "./shared/filters";
 import { scoreTone } from "./shared/scoreDisplay";
-import { detectPreferredLanguage, languageLabel, localizeDynamicText, type Language } from "./shared/i18n";
+import { detectPreferredLanguage, hasHanText, languageLabel, localizeDynamicText, type Language } from "./shared/i18n";
 
 type Role = "设计师" | "运营" | "设计总监" | "管理员";
 type ContentType = "电商页面" | "Amazon A+ 页面" | "官网 Banner";
@@ -1037,7 +1037,9 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
               {activeFrame?.exportedImageUrl || activeFrame?.thumbnailUrl ? (
                 <div className="image-frame">
                   <img src={activeFrame.exportedImageUrl || activeFrame.thumbnailUrl} alt={activeFrame.frameName} />
-                  {visibleAnnotatedIssues.map((issue, index) => <AnnotationBox key={issue.id} issue={issue} index={index + 1} active={issue.id === activeIssueId} onFocus={() => setActiveIssueId(issue.id)} />)}
+                  <div className="annotation-layer">
+                    {visibleAnnotatedIssues.map((issue, index) => <AnnotationBox key={issue.id} issue={issue} index={index + 1} active={issue.id === activeIssueId} onFocus={() => setActiveIssueId(issue.id)} />)}
+                  </div>
                 </div>
               ) : <div className="empty">{t("No exported image")}</div>}
             </div>
@@ -1146,7 +1148,7 @@ function ScorePanel({ result, status, issues = [] }: { result: any; status?: Rev
                   <strong>{t("Related revision items")}</strong>
                   {relatedIssues.map((issue) => (
                     <article key={issue.id}>
-                      <span>{dynamic(issue.title)}</span>
+                      <span>{displayIssueTitle(issue, dynamic)}</span>
                       <p>{dynamic(issue.description)}</p>
                       <em>{dynamic(issue.suggestion)}</em>
                     </article>
@@ -1168,7 +1170,7 @@ function IssueCard({ issue, index, annotationIndex, active, onFocus }: { issue: 
     <article className={`issue ${issue.mustFix ? "must" : ""} ${active ? "active" : ""}`} onMouseEnter={onFocus} onFocus={onFocus} onClick={onFocus} tabIndex={0}>
       <div className="issue-top">
         <span className="issue-index">{index}</span>
-        <strong>{dynamic(issue.title)}</strong>
+        <strong>{displayIssueTitle(issue, dynamic)}</strong>
         <span className={`severity ${issue.severity}`}>{label(issue.severity)}</span>
       </div>
       <div className="issue-tags"><span>{label(issue.type)}</span>{issue.mustFix ? <span>{t("AI marks must fix")}</span> : <span>{t("AI suggests optimization")}</span>}{annotationIndex ? <span className="annotation-link">{t("Canvas annotation #{index}", { index: annotationIndex })}</span> : <span>{t("No canvas annotation")}</span>}</div>
@@ -1180,6 +1182,15 @@ function IssueCard({ issue, index, annotationIndex, active, onFocus }: { issue: 
       </dl>
     </article>
   );
+}
+
+function displayIssueTitle(issue: Issue, dynamic: (value: unknown) => string) {
+  if (issue.title && issue.title !== "未命名问题") return dynamic(issue.title);
+  const source = [issue.description, issue.suggestion, issue.locationDescription].find((value) => String(value ?? "").trim());
+  const localized = dynamic(source ?? issue.title);
+  const sentence = localized.split(/[.。；;]/).find(Boolean)?.trim();
+  if (sentence && sentence !== "Untitled issue" && !hasHanText(sentence)) return sentence.slice(0, 96);
+  return dynamic("未命名问题");
 }
 
 function AnnotationBox({ issue, index, active, onFocus }: { issue: Issue; index: number; active?: boolean; onFocus?: () => void }) {

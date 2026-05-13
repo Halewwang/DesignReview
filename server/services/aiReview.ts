@@ -443,19 +443,33 @@ function mockReview(
 }
 
 export function toReviewIssue(raw: any, taskId: string, reviewResultId: string, frame?: ReviewFrame, submissionRound = 1): ReviewIssue {
+  const description = pickString(raw.description, raw.detail, raw.reason, raw.issue_description, raw.issueDescription);
+  const suggestion = pickString(raw.suggestion, raw.recommendation, raw.fix, raw.action, raw.revision_suggestion, raw.revisionSuggestion);
+  const title = pickString(
+    raw.title,
+    raw.issue_title,
+    raw.issueTitle,
+    raw.problem_title,
+    raw.problemTitle,
+    raw.name,
+    raw.summary,
+    raw.issue,
+    raw.problem
+  ) || titleFromText(description, suggestion);
+
   return {
     id: uid("issue"),
     taskId,
     frameId: frame?.id,
     reviewResultId,
     submissionRound,
-    title: raw.title ?? "未命名问题",
+    title: title || "未命名问题",
     type: raw.type ?? "品牌一致性",
     severity: raw.severity ?? "建议",
     frameName: raw.frame_name ?? raw.frameName ?? frame?.frameName,
-    locationDescription: raw.location_description ?? raw.locationDescription ?? "",
-    description: raw.description ?? "",
-    suggestion: raw.suggestion ?? "",
+    locationDescription: pickString(raw.location_description, raw.locationDescription, raw.location, raw.area) ?? "",
+    description: description ?? "",
+    suggestion: suggestion ?? "",
     relatedStandardSource: raw.related_standard_source ?? raw.relatedStandardSource ?? "品牌设计规范.md",
     relatedStandardSection: raw.related_standard_section ?? raw.relatedStandardSection ?? "未关联章节",
     mustFix: Boolean(raw.must_fix ?? raw.mustFix),
@@ -473,4 +487,19 @@ export function toReviewIssue(raw: any, taskId: string, reviewResultId: string, 
       : undefined,
     createdAt: new Date().toISOString()
   };
+}
+
+function pickString(...values: unknown[]) {
+  const value = values.find((item) => typeof item === "string" && item.trim());
+  return typeof value === "string" ? value.trim() : undefined;
+}
+
+function titleFromText(...values: Array<string | undefined>) {
+  const source = values.find((value) => value?.trim());
+  if (!source) return undefined;
+  return source
+    .split(/[。.!！?？；;]/)
+    .find(Boolean)
+    ?.trim()
+    .slice(0, 48);
 }
