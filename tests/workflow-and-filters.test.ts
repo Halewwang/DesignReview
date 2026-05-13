@@ -94,6 +94,42 @@ describe("AI schema validation", () => {
     expect(issue.suggestion).toBe("Increase contrast");
   });
 
+  it("preserves bilingual AI result fields for language-specific rendering", () => {
+    const review = normalizeAiReview({
+      total_score: 80,
+      conclusion: "建议小幅修改",
+      dimension_scores: {
+        brand_consistency: {
+          score: 24,
+          max_score: 30,
+          comment: "中文点评",
+          comment_i18n: { zh: "中文点评", en: "English comment" },
+          deduction_items: ["中文扣分"],
+          deduction_items_i18n: [{ zh: "中文扣分", en: "English deduction" }]
+        },
+        layout_standard: { score: 22, max_score: 30, comment: "ok" },
+        ecommerce_expression: { score: 20, max_score: 25, comment: "ok" },
+        delivery_standard: { score: 14, max_score: 15, comment: "ok" }
+      },
+      issues: [
+        {
+          title: "中文标题",
+          title_i18n: { zh: "中文标题", en: "English title" },
+          description: "中文描述",
+          description_i18n: { zh: "中文描述", en: "English description" },
+          type: "品牌一致性",
+          severity: "中等"
+        }
+      ]
+    });
+    const issue = toReviewIssue(review.issues[0], "task_1", "result_1");
+
+    expect(review.dimension_scores.brand_consistency.comment_i18n.en).toBe("English comment");
+    expect(review.dimension_scores.brand_consistency.deduction_items_i18n[0].en).toBe("English deduction");
+    expect(issue.i18n?.title?.en).toBe("English title");
+    expect(issue.i18n?.description?.zh).toBe("中文描述");
+  });
+
   it("derives an issue title from description when AI omits all title fields", () => {
     const issue = toReviewIssue(
       {
@@ -106,6 +142,24 @@ describe("AI schema validation", () => {
     );
 
     expect(issue.title).toBe("右侧上方右卡副copy存在德语语法错误");
+  });
+
+  it("normalizes annotation aliases and center-origin coordinates", () => {
+    const issue = toReviewIssue(
+      {
+        type: "品牌一致性",
+        severity: "中等",
+        description: "Hero copy has low contrast",
+        annotation_suggestion: { type: "rect", cx: 0.5, cy: 0.4, width: 0.2, height: 0.1, coordinate_origin: "center", confidence: 0.9 }
+      },
+      "task_1",
+      "result_1"
+    );
+
+    expect(issue.annotationSuggestion?.xPercent).toBe(40);
+    expect(issue.annotationSuggestion?.yPercent).toBe(35);
+    expect(issue.annotationSuggestion?.widthPercent).toBe(20);
+    expect(issue.annotationSuggestion?.heightPercent).toBe(10);
   });
 
   it("rejects invalid AI score and annotation coordinates", () => {

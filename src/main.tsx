@@ -89,10 +89,18 @@ type Issue = {
   description: string;
   suggestion: string;
   relatedStandardSection: string;
+  i18n?: {
+    title?: LocalizedText;
+    locationDescription?: LocalizedText;
+    description?: LocalizedText;
+    suggestion?: LocalizedText;
+    relatedStandardSection?: LocalizedText;
+  };
   mustFix: boolean;
   resolutionStatus: string;
   annotationSuggestion?: { type: "point" | "rect"; xPercent: number; yPercent: number; widthPercent?: number; heightPercent?: number };
 };
+type LocalizedText = { zh?: string; en?: string };
 type Detail = {
   task: Task;
   frames: Frame[];
@@ -525,8 +533,8 @@ function Dashboard({ session, onNew, onOpen }: { session: Session; onNew: () => 
         <TaskFilterBar filters={filters} onChange={setFilters} />
         <div className="queue-board">
           {loading && <Card className="hero-panel"><Card.Content>{t("Loading tasks...")}</Card.Content></Card>}
-          {lanes.map((lane) => (
-            <Card className="queue-lane" key={lane.key}>
+          {lanes.slice(0, 2).map((lane) => (
+            <Card className="queue-lane queue-lane-primary" key={lane.key}>
               <Card.Content className="queue-lane-body">
                 <div className="lane-head"><h3>{lane.label}</h3><Chip size="sm" color="accent" variant="soft">{lane.tasks.length}</Chip></div>
                 {lane.tasks.map((task) => <TaskCard task={task} onOpen={onOpen} key={task.id} />)}
@@ -534,6 +542,17 @@ function Dashboard({ session, onNew, onOpen }: { session: Session; onNew: () => 
               </Card.Content>
             </Card>
           ))}
+          <div className="queue-side-stack">
+            {lanes.slice(2).map((lane) => (
+              <Card className="queue-lane queue-lane-compact" key={lane.key}>
+                <Card.Content className="queue-lane-body">
+                  <div className="lane-head"><h3>{lane.label}</h3><Chip size="sm" color="accent" variant="soft">{lane.tasks.length}</Chip></div>
+                  {lane.tasks.slice(0, 2).map((task) => <TaskCard task={task} onOpen={onOpen} key={task.id} compact />)}
+                  {lane.tasks.length === 0 && <div className="lane-empty">{t("Empty")}</div>}
+                </Card.Content>
+              </Card>
+            ))}
+          </div>
           <Card className="queue-lane wide">
             <Card.Content className="queue-lane-body">
               <div className="lane-head"><h3>{t("Filtered results")}</h3><Chip size="sm" color="accent" variant="soft">{filteredTasks.length}</Chip></div>
@@ -1117,7 +1136,7 @@ function IssueFilterBar({
 }
 
 function ScorePanel({ result, status, issues = [] }: { result: any; status?: ReviewStatus; issues?: Issue[] }) {
-  const { t, label, dynamic } = useI18n();
+  const { t, label, dynamic, language } = useI18n();
   if (!result) return <section className="panel"><h3>{t("AI pre-review")}</h3><p className="meta">{t("No AI result yet.")}</p></section>;
   const scores = result.dimensionScores;
   const vetoIssues = result.rawAiResponse?.veto_issues ?? [];
@@ -1141,16 +1160,16 @@ function ScorePanel({ result, status, issues = [] }: { result: any; status?: Rev
               <span>{label(rawLabel)}</span>
               <b>{value.score}/{value.max_score}</b>
               <p>{rubric?.definition ? t(rubric.definition) : ""}</p>
-              <p>{dynamic(value.comment)}</p>
-              {value.deduction_items?.length ? <ul>{value.deduction_items.map((item: unknown, index: number) => <li key={`${key}-${index}`}>{dynamic(formatDeductionItem(item))}</li>)}</ul> : <em>{t("No clear deduction items")}</em>}
+              <p>{localizedText(language, value.comment_i18n ?? value.commentI18n ?? value.i18n?.comment, value.comment, dynamic)}</p>
+              {value.deduction_items?.length ? <ul>{value.deduction_items.map((item: unknown, index: number) => <li key={`${key}-${index}`}>{localizedText(language, localizedArrayItem(value.deduction_items_i18n ?? value.deductionItemsI18n, index), formatDeductionItem(item), dynamic)}</li>)}</ul> : <em>{t("No clear deduction items")}</em>}
               {relatedIssues.length ? (
                 <div className="score-issue-list">
                   <strong>{t("Related revision items")}</strong>
                   {relatedIssues.map((issue) => (
                     <article key={issue.id}>
-                      <span>{displayIssueTitle(issue, dynamic)}</span>
-                      <p>{dynamic(issue.description)}</p>
-                      <em>{dynamic(issue.suggestion)}</em>
+                      <span>{displayIssueTitle(issue, language, dynamic)}</span>
+                      <p>{localizedIssueText(issue, "description", language, dynamic)}</p>
+                      <em>{localizedIssueText(issue, "suggestion", language, dynamic)}</em>
                     </article>
                   ))}
                 </div>
@@ -1165,32 +1184,54 @@ function ScorePanel({ result, status, issues = [] }: { result: any; status?: Rev
 }
 
 function IssueCard({ issue, index, annotationIndex, active, onFocus }: { issue: Issue; index: number; annotationIndex?: number; active?: boolean; onFocus?: () => void }) {
-  const { t, label, dynamic } = useI18n();
+  const { t, label, dynamic, language } = useI18n();
   return (
     <article className={`issue ${issue.mustFix ? "must" : ""} ${active ? "active" : ""}`} onMouseEnter={onFocus} onFocus={onFocus} onClick={onFocus} tabIndex={0}>
       <div className="issue-top">
         <span className="issue-index">{index}</span>
-        <strong>{displayIssueTitle(issue, dynamic)}</strong>
+        <strong>{displayIssueTitle(issue, language, dynamic)}</strong>
         <span className={`severity ${issue.severity}`}>{label(issue.severity)}</span>
       </div>
       <div className="issue-tags"><span>{label(issue.type)}</span>{issue.mustFix ? <span>{t("AI marks must fix")}</span> : <span>{t("AI suggests optimization")}</span>}{annotationIndex ? <span className="annotation-link">{t("Canvas annotation #{index}", { index: annotationIndex })}</span> : <span>{t("No canvas annotation")}</span>}</div>
       <dl>
-        <dt>{t("Location")}</dt><dd>{annotationIndex ? t("See canvas annotation #{index}", { index: annotationIndex }) : (issue.frameName || "--")} · {issue.locationDescription ? dynamic(issue.locationDescription) : t("Unspecified area")}</dd>
-        <dt>{t("Judgment")}</dt><dd>{dynamic(issue.description)}</dd>
-        <dt>{t("Revision suggestion")}</dt><dd>{dynamic(issue.suggestion)}</dd>
-        <dt>{t("Basis")}</dt><dd>{dynamic(issue.relatedStandardSection)}</dd>
+        <dt>{t("Location")}</dt><dd>{annotationIndex ? t("See canvas annotation #{index}", { index: annotationIndex }) : (issue.frameName || "--")} · {issue.locationDescription ? localizedIssueText(issue, "locationDescription", language, dynamic) : t("Unspecified area")}</dd>
+        <dt>{t("Judgment")}</dt><dd>{localizedIssueText(issue, "description", language, dynamic)}</dd>
+        <dt>{t("Revision suggestion")}</dt><dd>{localizedIssueText(issue, "suggestion", language, dynamic)}</dd>
+        <dt>{t("Basis")}</dt><dd>{localizedIssueText(issue, "relatedStandardSection", language, dynamic)}</dd>
       </dl>
     </article>
   );
 }
 
-function displayIssueTitle(issue: Issue, dynamic: (value: unknown) => string) {
-  if (issue.title && issue.title !== "未命名问题") return dynamic(issue.title);
-  const source = [issue.description, issue.suggestion, issue.locationDescription].find((value) => String(value ?? "").trim());
+function displayIssueTitle(issue: Issue, language: Language, dynamic: (value: unknown) => string) {
+  const title = localizedIssueText(issue, "title", language, dynamic);
+  if (title && title !== "未命名问题" && title !== "Untitled issue") return title;
+  const source = [localizedIssueText(issue, "description", language, dynamic), localizedIssueText(issue, "suggestion", language, dynamic), localizedIssueText(issue, "locationDescription", language, dynamic)].find((value) => String(value ?? "").trim());
   const localized = dynamic(source ?? issue.title);
   const sentence = localized.split(/[.。；;]/).find(Boolean)?.trim();
   if (sentence && sentence !== "Untitled issue" && !hasHanText(sentence)) return sentence.slice(0, 96);
   return dynamic("未命名问题");
+}
+
+function localizedIssueText(issue: Issue, field: keyof NonNullable<Issue["i18n"]>, language: Language, dynamic: (value: unknown) => string) {
+  const fallbackKey = field === "locationDescription" ? "locationDescription" : field === "relatedStandardSection" ? "relatedStandardSection" : field;
+  return localizedText(language, issue.i18n?.[field], issue[fallbackKey as keyof Issue], dynamic);
+}
+
+function localizedText(language: Language, value: unknown, fallback: unknown, dynamic: (value: unknown) => string) {
+  if (value && typeof value === "object") {
+    const localized = value as LocalizedText;
+    const exact = localized[language];
+    if (typeof exact === "string" && exact.trim()) return exact.trim();
+    const alternate = language === "en" ? localized.zh : localized.en;
+    if (typeof alternate === "string" && alternate.trim()) return dynamic(alternate);
+  }
+  if (typeof value === "string" && value.trim()) return dynamic(value);
+  return dynamic(fallback);
+}
+
+function localizedArrayItem(values: unknown, index: number) {
+  return Array.isArray(values) ? values[index] : undefined;
 }
 
 function AnnotationBox({ issue, index, active, onFocus }: { issue: Issue; index: number; active?: boolean; onFocus?: () => void }) {

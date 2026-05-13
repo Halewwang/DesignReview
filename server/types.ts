@@ -56,6 +56,19 @@ export type DimensionKey =
   | "ecommerce_expression"
   | "delivery_standard";
 
+export type LocalizedText = {
+  zh?: string;
+  en?: string;
+};
+
+export type ReviewIssueI18n = {
+  title?: LocalizedText;
+  locationDescription?: LocalizedText;
+  description?: LocalizedText;
+  suggestion?: LocalizedText;
+  relatedStandardSection?: LocalizedText;
+};
+
 export type ReviewIssue = {
   id: string;
   taskId: string;
@@ -71,6 +84,7 @@ export type ReviewIssue = {
   suggestion: string;
   relatedStandardSource: string;
   relatedStandardSection: string;
+  i18n?: ReviewIssueI18n;
   mustFix: boolean;
   resolutionStatus: "待解决" | "疑似已解决" | "仍未解决" | "新增问题" | "无法判断";
   annotationSuggestion?: Annotation;
@@ -97,7 +111,7 @@ export type ReviewResult = {
   submissionRound: number;
   totalScore: number;
   conclusion: string;
-  dimensionScores: Record<DimensionKey, { score: number; max_score: number; comment: string; deduction_items?: string[] }>;
+  dimensionScores: Record<DimensionKey, { score: number; max_score: number; comment: string; comment_i18n?: LocalizedText; deduction_items?: string[]; deduction_items_i18n?: Array<LocalizedText | string> }>;
   rawAiResponse: unknown;
   createdAt: string;
 };

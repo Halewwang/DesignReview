@@ -2188,10 +2188,26 @@ nav button,
   background: transparent;
   border: 0;
   border-radius: 0;
+  grid-template-columns: minmax(0, 1.32fr) minmax(0, 1.32fr) minmax(230px, .76fr);
 }
 
 .queue-lane {
   min-height: 246px;
+}
+
+.queue-side-stack {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  min-height: 246px;
+}
+
+.queue-lane-primary {
+  min-width: 0;
+}
+
+.queue-lane-compact {
+  min-height: 118px;
 }
 
 .queue-lane-body {
@@ -2270,9 +2286,52 @@ nav button,
   min-height: 50px;
 }
 
+.queue-lane-compact .queue-lane-body {
+  gap: 8px;
+}
+
+.queue-lane-compact .lane-head {
+  min-height: 28px;
+  padding-bottom: 8px;
+}
+
+.queue-lane-compact .task-card-body {
+  padding: 9px 10px;
+}
+
+.queue-lane-compact .task-meta,
+.queue-lane-compact .task-divider,
+.queue-lane-compact .task-actions {
+  display: none;
+}
+
 .queue-board > .empty {
   grid-column: 1 / -1;
   width: min(360px, 100%);
+}
+
+@media (max-width: 1180px) {
+  .queue-board {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .queue-side-stack,
+  .queue-lane.wide,
+  .queue-board > .empty {
+    grid-column: 1 / -1;
+  }
+
+  .queue-side-stack {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: none;
+  }
+}
+
+@media (max-width: 680px) {
+  .queue-board,
+  .queue-side-stack {
+    grid-template-columns: 1fr;
+  }
 }
 
 .task-workspace .form-panel {

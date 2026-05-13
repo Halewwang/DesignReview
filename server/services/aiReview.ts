@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import fs from "node:fs";
 import path from "node:path";
-import { ContentType, DimensionKey, ReviewFrame, ReviewIssue, ReviewTask } from "../types.js";
+import { Annotation, ContentType, DimensionKey, ReviewFrame, ReviewIssue, ReviewTask } from "../types.js";
 import { readStoreValue, uid, writeStoreValue } from "../db.js";
 import { selectRelevantSections, VisRuleSection } from "./vis.js";
 
@@ -386,8 +386,9 @@ function buildPrompt(
     "请使用视觉模型能力直接观察图片区域，对每个明确问题给出可标注位置。坐标必须以对应图片自身左上角为 (0,0)、右下角为 (100,100)，不能按页面留白、浏览器画布或截图外框计算。",
     "total_score 必须等于四个 dimension_scores.*.score 的加总；不要单独估算总分。",
     "dimension_scores 中每个维度必须包含 deduction_items 数组，逐条列出扣分原因；每条扣分必须写清：具体画面/模块/文字或产品元素、违反的标准点、对业务表达的影响。不要只写“层级不足”“品牌感弱”这类泛化结论；没有扣分则返回空数组。",
+    "所有 AI 生成的自然语言审核结果必须同时返回中文和英文两个版本。dimension_scores.* 必须包含 comment_i18n:{zh,en} 与 deduction_items_i18n:[{zh,en}]；issues.* 必须包含 title_i18n、location_description_i18n、description_i18n、suggestion_i18n、related_standard_section_i18n。原有中文字段仍保留用于旧流程兼容，英文必须是完整自然英文，不能中英混写。前端会按当前语言直接读取对应版本。",
     `standard_source 必须返回 file_name=${sourceName}, brand=EMKE, version=${sourceVersion}。`,
-    "输出字段必须包含 total_score, conclusion, standard_source, dimension_scores, veto_issues, issues, revision_comparison。问题必须尽量关联 related_standard_section，并提供 annotation_suggestion 百分比坐标。annotation_suggestion 必须框选图片中实际问题区域，优先使用 rect，x_percent/y_percent/width_percent/height_percent 均为 0-100；如果问题对应文字或模块，框选该文字/模块，不要框选整张图或空白区域。"
+    "输出字段必须包含 total_score, conclusion, standard_source, dimension_scores, veto_issues, issues, revision_comparison。问题必须尽量关联 related_standard_section，并提供 annotation_suggestion 百分比坐标。annotation_suggestion 必须框选图片中实际问题区域，优先使用 rect，x_percent/y_percent/width_percent/height_percent 均为 0-100；coordinate_origin 必须返回 top_left。如果只能给出中心点坐标，coordinate_origin 返回 center，并保证 width_percent/height_percent 是区域尺寸。如果问题对应文字或模块，框选该文字/模块，不要框选整张图或空白区域。"
   ].join("\n\n");
 }
 
@@ -445,6 +446,8 @@ function mockReview(
 export function toReviewIssue(raw: any, taskId: string, reviewResultId: string, frame?: ReviewFrame, submissionRound = 1): ReviewIssue {
   const description = pickString(raw.description, raw.detail, raw.reason, raw.issue_description, raw.issueDescription);
   const suggestion = pickString(raw.suggestion, raw.recommendation, raw.fix, raw.action, raw.revision_suggestion, raw.revisionSuggestion);
+  const locationDescription = pickString(raw.location_description, raw.locationDescription, raw.location, raw.area) ?? "";
+  const relatedStandardSection = raw.related_standard_section ?? raw.relatedStandardSection ?? "未关联章节";
   const title = pickString(
     raw.title,
     raw.issue_title,
@@ -456,6 +459,7 @@ export function toReviewIssue(raw: any, taskId: string, reviewResultId: string, 
     raw.issue,
     raw.problem
   ) || titleFromText(description, suggestion);
+  const annotationSuggestion = normalizeAnnotation(raw.annotation_suggestion ?? raw.annotationSuggestion, raw);
 
   return {
     id: uid("issue"),
@@ -467,26 +471,82 @@ export function toReviewIssue(raw: any, taskId: string, reviewResultId: string, 
     type: raw.type ?? "品牌一致性",
     severity: raw.severity ?? "建议",
     frameName: raw.frame_name ?? raw.frameName ?? frame?.frameName,
-    locationDescription: pickString(raw.location_description, raw.locationDescription, raw.location, raw.area) ?? "",
+    locationDescription,
     description: description ?? "",
     suggestion: suggestion ?? "",
     relatedStandardSource: raw.related_standard_source ?? raw.relatedStandardSource ?? "品牌设计规范.md",
-    relatedStandardSection: raw.related_standard_section ?? raw.relatedStandardSection ?? "未关联章节",
+    relatedStandardSection,
+    i18n: normalizeIssueI18n(raw, { title, description, suggestion, locationDescription, relatedStandardSection }),
     mustFix: Boolean(raw.must_fix ?? raw.mustFix),
     resolutionStatus: raw.resolutionStatus ?? raw.resolution_status ?? "待解决",
-    annotationSuggestion: raw.annotation_suggestion && (raw.annotation_suggestion.confidence ?? raw.annotation_confidence ?? raw.annotationConfidence ?? 0.7) >= 0.7
-      ? {
-          type: raw.annotation_suggestion.type ?? "rect",
-          xPercent: raw.annotation_suggestion.x_percent ?? raw.annotation_suggestion.xPercent ?? 50,
-          yPercent: raw.annotation_suggestion.y_percent ?? raw.annotation_suggestion.yPercent ?? 30,
-          widthPercent: raw.annotation_suggestion.width_percent ?? raw.annotation_suggestion.widthPercent ?? 20,
-          heightPercent: raw.annotation_suggestion.height_percent ?? raw.annotation_suggestion.heightPercent ?? 12,
-          confidence: raw.annotation_suggestion.confidence ?? raw.annotation_confidence ?? raw.annotationConfidence ?? 0.7,
-          source: raw.annotation_suggestion.source ?? "ai"
-        }
-      : undefined,
+    annotationSuggestion,
     createdAt: new Date().toISOString()
   };
+}
+
+function normalizeAnnotation(annotation: any, raw: any): Annotation | undefined {
+  if (!annotation) return undefined;
+  const confidence = numberFrom(annotation.confidence, annotation.annotation_confidence, raw.annotation_confidence, raw.annotationConfidence) ?? 0.7;
+  if (confidence < 0.7) return undefined;
+  const width = percentFrom(annotation.width_percent, annotation.widthPercent, annotation.width, annotation.w) ?? 20;
+  const height = percentFrom(annotation.height_percent, annotation.heightPercent, annotation.height, annotation.h) ?? 12;
+  const origin = String(annotation.coordinate_origin ?? annotation.coordinateOrigin ?? annotation.origin ?? annotation.anchor ?? "top_left").toLowerCase();
+  const rawX = percentFrom(annotation.x_percent, annotation.xPercent, annotation.x, annotation.left, annotation.cx, annotation.center_x, annotation.centerX) ?? 50;
+  const rawY = percentFrom(annotation.y_percent, annotation.yPercent, annotation.y, annotation.top, annotation.cy, annotation.center_y, annotation.centerY) ?? 30;
+  const isCenter = origin.includes("center") || annotation.cx !== undefined || annotation.cy !== undefined || annotation.center_x !== undefined || annotation.centerY !== undefined;
+  const x = isCenter ? rawX - width / 2 : rawX;
+  const y = isCenter ? rawY - height / 2 : rawY;
+  const safeX = clampPercent(x);
+  const safeY = clampPercent(y);
+  return {
+    type: annotation.type === "point" ? "point" : "rect",
+    xPercent: safeX,
+    yPercent: safeY,
+    widthPercent: Math.min(clampPercent(width), 100 - safeX),
+    heightPercent: Math.min(clampPercent(height), 100 - safeY),
+    confidence,
+    source: annotation.source === "manual" || annotation.source === "migrated" || annotation.source === "mock" ? annotation.source : "ai"
+  };
+}
+
+function normalizeIssueI18n(raw: any, fallback: Record<string, string | undefined>) {
+  const i18n = raw.i18n ?? {};
+  const result = {
+    title: localizedFrom(raw.title_i18n, raw.titleI18n, i18n.title, fallback.title),
+    locationDescription: localizedFrom(raw.location_description_i18n, raw.locationDescriptionI18n, i18n.locationDescription, i18n.location_description, fallback.locationDescription),
+    description: localizedFrom(raw.description_i18n, raw.descriptionI18n, i18n.description, fallback.description),
+    suggestion: localizedFrom(raw.suggestion_i18n, raw.suggestionI18n, i18n.suggestion, fallback.suggestion),
+    relatedStandardSection: localizedFrom(raw.related_standard_section_i18n, raw.relatedStandardSectionI18n, i18n.relatedStandardSection, i18n.related_standard_section, fallback.relatedStandardSection)
+  };
+  return Object.values(result).some(Boolean) ? result : undefined;
+}
+
+function localizedFrom(...values: unknown[]) {
+  for (const value of values) {
+    if (!value) continue;
+    if (typeof value === "object") {
+      const input = value as Record<string, unknown>;
+      const zh = pickString(input.zh, input.zh_cn, input.zhCN, input.cn, input.chinese);
+      const en = pickString(input.en, input.en_us, input.enUS, input.english);
+      if (zh || en) return { zh, en };
+    }
+  }
+  return undefined;
+}
+
+function percentFrom(...values: unknown[]) {
+  const value = numberFrom(...values);
+  if (value === undefined) return undefined;
+  return value > 0 && value <= 1 ? value * 100 : value;
+}
+
+function numberFrom(...values: unknown[]) {
+  const value = values.find((item) => typeof item === "number" && Number.isFinite(item));
+  return typeof value === "number" ? value : undefined;
+}
+
+function clampPercent(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value * 100) / 100));
 }
 
 function pickString(...values: unknown[]) {
