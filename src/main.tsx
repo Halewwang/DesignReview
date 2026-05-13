@@ -667,8 +667,7 @@ function TaskCard({ task, onOpen, compact = false }: { task: Task; onOpen: (id: 
         </div>
         {isReviewing && (
           <div className="task-review-progress">
-            <span>{t("Review may take 1-3 min")}</span>
-            <em>{t("Auto-refreshing")}</em>
+            <span>{t("AI visual analysis")}</span>
           </div>
         )}
       </Card.Content>

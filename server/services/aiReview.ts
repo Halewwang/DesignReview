@@ -164,7 +164,8 @@ export function normalizeAiReview(input: any) {
     dimension_scores,
     veto_issues: Array.isArray(input.veto_issues) ? input.veto_issues : [],
     issues: Array.isArray(input.issues) ? normalizeIssueAnnotations(input.issues) : [],
-    revision_comparison: input.revision_comparison ?? { resolved: [], unresolved: [], new_issues: [], unknown: [] }
+    revision_comparison: input.revision_comparison ?? { resolved: [], unresolved: [], new_issues: [], unknown: [] },
+    provider_error: input.provider_error
   };
 }
 
@@ -310,9 +311,20 @@ export async function runAiReview(args: {
 }) {
   const relevantSections = selectRelevantSections(args.sections, args.task.contentType);
   const aiConfig = await getAiProviderConfigAsync();
-  const raw = !aiConfig.configured
-    ? mockReview(args.task, args.frames, args.previousIssues, args.standardSource)
-    : await callVisionModel(args.task, args.frames, relevantSections, args.previousIssues, args.standardSource, aiConfig);
+  let raw: any;
+  if (!aiConfig.configured) {
+    raw = mockReview(args.task, args.frames, args.previousIssues, args.standardSource);
+  } else {
+    try {
+      raw = await callVisionModel(args.task, args.frames, relevantSections, args.previousIssues, args.standardSource, aiConfig);
+    } catch (error) {
+      console.error("AI review provider failed, using local fallback", errorMessage(error));
+      raw = {
+        ...mockReview(args.task, args.frames, args.previousIssues, args.standardSource),
+        provider_error: errorMessage(error)
+      };
+    }
+  }
   return normalizeAiReview(raw);
 }
 
@@ -343,9 +355,11 @@ async function callVisionModel(
       .filter((frame) => frame.exportedImageUrl)
       .map((frame) => ({
         type: "image_url" as const,
-        image_url: { url: frame.exportedImageUrl!, detail: "high" as const }
+        image_url: { url: frame.exportedImageUrl!, detail: aiImageDetail() }
       }))
   ];
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), aiProviderTimeoutMs());
   const completion = await client.chat.completions.create({
     model: aiConfig.model,
     response_format: { type: "json_object" },
@@ -358,8 +372,25 @@ async function callVisionModel(
       { role: "user", content }
     ],
     temperature: 0.2
-  });
+  }, { signal: controller.signal }).finally(() => clearTimeout(timeout));
   return JSON.parse(completion.choices[0]?.message?.content ?? "{}");
+}
+
+function aiImageDetail(): "low" | "high" | "auto" {
+  const value = process.env.AI_IMAGE_DETAIL;
+  return value === "high" || value === "auto" ? value : "low";
+}
+
+function aiProviderTimeoutMs() {
+  return Number(process.env.AI_REVIEW_PROVIDER_TIMEOUT_MS ?? 90_000);
+}
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error) {
+    if (error.name === "AbortError") return "AI provider request timed out";
+    return error.message;
+  }
+  return "Unknown AI provider error";
 }
 
 function buildPrompt(
