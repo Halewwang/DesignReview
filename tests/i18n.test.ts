@@ -21,6 +21,7 @@ describe("language preference", () => {
 
   it("localizes stored review logs and AI text for English display", () => {
     expect(localizeDynamicText("en", "更新任务名称或提交人 ID")).toBe("Updated task name or submitter ID");
+    expect(localizeDynamicText("en", "AI 初审超时，请刷新后重新发起")).toBe("AI pre-review timed out. Refresh and retry.");
     expect(localizeDynamicText("en", "上传 1 张图片并创建审核任务")).toBe("Uploaded 1 image(s) and created review task");
     expect(localizeDynamicText("en", "Hero Logo 放在复杂百叶窗背景上")).toBe("Hero logo is placed over a complex shutter background");
   });

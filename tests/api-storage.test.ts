@@ -134,6 +134,34 @@ describe("API validation and health", () => {
     expect(db.frames.filter((frame) => frame.taskId === response.body.task.id)).toHaveLength(2);
   });
 
+  it("marks stale AI reviews as failed when the queue is read", async () => {
+    await mutateDb((db) => {
+      db.tasks.push({
+        id: "task_stale",
+        title: "Stale review",
+        contentType: "官网 Banner",
+        description: "",
+        source: "upload",
+        status: "ai_reviewing",
+        priority: "普通",
+        submitterName: "Hale",
+        submitterId: "Hale",
+        submitterRole: "设计师",
+        createdAt: "2026-05-13T00:00:00.000Z",
+        updatedAt: "2026-05-13T00:00:00.000Z",
+        submissionRound: 1
+      });
+    });
+
+    const response = await request(app).get("/api/reviews").set(designerHeaders);
+    const task = response.body.find((item: any) => item.id === "task_stale");
+    const db = await readDb();
+
+    expect(response.status).toBe(200);
+    expect(task.status).toBe("ai_review_failed");
+    expect(db.logs[0]).toMatchObject({ taskId: "task_stale", action: "AI 初审超时，请刷新后重新发起" });
+  });
+
   it("rejects upload-based reviews with more than nine images", async () => {
     const images = Array.from({ length: 10 }, (_, index) => ({
       fileName: `image-${index + 1}.png`,

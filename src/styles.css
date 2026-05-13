@@ -2305,6 +2305,43 @@ nav button,
   display: none;
 }
 
+.task-review-progress {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.task-review-progress::before {
+  content: "";
+  width: 100%;
+  height: 4px;
+  overflow: hidden;
+  background: var(--surface-secondary);
+  border-radius: 999px;
+}
+
+.task-review-progress::after {
+  content: "";
+  width: 38%;
+  height: 4px;
+  margin-top: -9px;
+  background: var(--accent);
+  border-radius: 999px;
+  animation: review-progress 1.3s ease-in-out infinite alternate;
+}
+
+.task-review-progress em {
+  color: var(--accent);
+  font-style: normal;
+}
+
+.queue-lane-compact .task-review-progress span {
+  display: none;
+}
+
 .queue-board > .empty {
   grid-column: 1 / -1;
   width: min(360px, 100%);
@@ -2313,6 +2350,14 @@ nav button,
 @media (max-width: 1180px) {
   .queue-board {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ai-progress-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-progress-actions {
+    justify-items: start;
   }
 
   .queue-side-stack,
@@ -3330,6 +3375,77 @@ nav button,
   color: #041207 !important;
   background: #36d675 !important;
   border-color: rgba(54,214,117,.72) !important;
+}
+
+.ai-progress-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, .9fr) auto;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 14px;
+  border-color: color-mix(in oklch, var(--accent) 42%, var(--border));
+}
+
+.ai-progress-panel h3 {
+  margin: 2px 0 8px;
+  font-size: 18px;
+  font-weight: 820;
+}
+
+.ai-progress-panel p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.ai-progress-steps {
+  display: grid;
+  gap: 8px;
+}
+
+.ai-progress-steps span {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  padding: 9px 11px;
+  color: var(--muted);
+  background: var(--surface-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--field-radius);
+  font-size: 12px;
+}
+
+.ai-progress-steps span.active {
+  color: var(--foreground);
+  border-color: var(--accent);
+}
+
+.ai-progress-steps b {
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.ai-progress-actions {
+  display: grid;
+  justify-items: end;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ai-progress-actions .action-button {
+  width: max-content;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+@keyframes review-progress {
+  from { transform: translateX(0); }
+  to { transform: translateX(164%); }
 }
 
 .task-card-body .task-stats {

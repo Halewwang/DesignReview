@@ -279,7 +279,21 @@ const uiCopy: Record<Language, Record<string, string>> = {
     "Withdraw failed": "撤回失败",
     "Confirm deleting this review task? Related Frames, results, and issues will also be deleted.": "确认删除这个审核任务？相关 Frame、结果和问题记录会一起删除。",
     "Delete failed": "删除失败",
-    "Resubmit failed": "重新提交失败"
+    "Resubmit failed": "重新提交失败",
+    "AI review in progress": "AI 审核进行中",
+    "The system is analyzing selected images. This usually takes 1-3 minutes.": "系统正在分析已选图片，通常需要 1-3 分钟。",
+    "If it runs longer than a few minutes, refresh this page. Timed-out reviews will become retryable automatically.": "如果等待超过几分钟，请刷新页面。超时的审核会自动变为可重新发起。",
+    "Step 1": "步骤 1",
+    "Image exported": "图片已准备",
+    "Step 2": "步骤 2",
+    "AI visual analysis": "AI 视觉分析",
+    "Step 3": "步骤 3",
+    "Generating report": "生成审核报告",
+    "Reviewing now": "正在审核",
+    "Started {minutes} min ago": "已开始 {minutes} 分钟",
+    "Auto-refreshing": "自动刷新中",
+    "Review may take 1-3 min": "预计 1-3 分钟",
+    "Refresh status": "刷新状态"
   },
   en: {}
 };
@@ -485,6 +499,7 @@ function Dashboard({ session, onNew, onOpen }: { session: Session; onNew: () => 
   const { t } = useI18n();
   const { data: tasks, error, reload, loading } = useApi<Task[]>("/api/reviews", session, []);
   const [filters, setFilters] = useState<TaskFilters>({ contentType: "", status: "", submitterId: "", keyword: "", onlyMine: false });
+  const hasActiveAiReview = tasks.some((task) => task.status === "ai_reviewing");
   const filteredTasks = useMemo(
     () => filterTasks(tasks, { ...filters, currentUserId: session.userId, currentUserName: session.name }),
     [tasks, filters, session.userId, session.name]
@@ -503,6 +518,11 @@ function Dashboard({ session, onNew, onOpen }: { session: Session; onNew: () => 
     { key: "in_progress", label: t("In progress"), tasks: filteredTasks.filter((task) => ["draft", "figma_reading", "frame_selection", "ai_reviewing", "resubmitted"].includes(task.status)) },
     { key: "failed", label: t("Failed"), tasks: filteredTasks.filter((task) => ["figma_read_failed", "ai_review_failed", "archived"].includes(task.status)) }
   ];
+  useEffect(() => {
+    if (!hasActiveAiReview) return;
+    const timer = window.setInterval(() => reload(), 10000);
+    return () => window.clearInterval(timer);
+  }, [hasActiveAiReview, reload]);
 
   return (
     <main className="workspace">
@@ -632,7 +652,8 @@ function TaskFilterBar({ filters, onChange }: { filters: TaskFilters; onChange: 
 }
 
 function TaskCard({ task, onOpen, compact = false }: { task: Task; onOpen: (id: string) => void; compact?: boolean }) {
-  const { label } = useI18n();
+  const { t, label } = useI18n();
+  const isReviewing = task.status === "ai_reviewing";
   return (
     <Card className={`task-card ${compact ? "compact" : ""}`} role="button" tabIndex={0} onClick={() => onOpen(task.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onOpen(task.id); }}>
       <Card.Content className="task-card-body">
@@ -644,6 +665,12 @@ function TaskCard({ task, onOpen, compact = false }: { task: Task; onOpen: (id: 
           <Chip size="sm" variant="soft" className={`status ${task.status}`}>{label(task.status)}</Chip>
           <span className={`score-chip score-chip--${scoreTone(task.aiTotalScore)}`}>{task.aiTotalScore ?? "--"}</span>
         </div>
+        {isReviewing && (
+          <div className="task-review-progress">
+            <span>{t("Review may take 1-3 min")}</span>
+            <em>{t("Auto-refreshing")}</em>
+          </div>
+        )}
       </Card.Content>
     </Card>
   );
@@ -900,10 +927,18 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
   const filteredIssues = filterIssues(issues, issueFilters);
   const visibleAnnotatedIssues = filteredIssues.filter((issue) => issue.annotationSuggestion && (!issue.frameName || !activeFrame?.frameName || issue.frameName === activeFrame.frameName));
   const annotationIndexByIssueId = new Map(visibleAnnotatedIssues.map((issue, index) => [issue.id, index + 1]));
+  const aiReviewing = data?.task.status === "ai_reviewing";
+  const reviewUpdatedAt = data?.task.updatedAt ? Date.parse(data.task.updatedAt) : NaN;
+  const reviewAgeMinutes = Number.isFinite(reviewUpdatedAt) ? Math.max(0, Math.floor((Date.now() - reviewUpdatedAt) / 60000)) : 0;
 
   useEffect(() => {
     if (data?.task) setMetaDraft({ title: data.task.title, submitterId: data.task.submitterId ?? "" });
   }, [data?.task?.id, data?.task?.title, data?.task?.submitterId]);
+  useEffect(() => {
+    if (!aiReviewing) return;
+    const timer = window.setInterval(() => reload(), 10000);
+    return () => window.clearInterval(timer);
+  }, [aiReviewing, reload]);
 
   async function resubmit() {
     setError("");
@@ -1026,6 +1061,7 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
         </div>
       </section>
       {(loadError || error) && <div className="error">{loadError || error}</div>}
+      {aiReviewing && <AiReviewProgressPanel minutes={reviewAgeMinutes} onRefresh={reload} />}
       <section className="review-layout">
         <div className="preview-panel">
           <div className="preview-toolbar">
@@ -1084,6 +1120,29 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
         </section>
       </section>
     </main>
+  );
+}
+
+function AiReviewProgressPanel({ minutes, onRefresh }: { minutes: number; onRefresh: () => void }) {
+  const { t } = useI18n();
+  return (
+    <section className="panel ai-progress-panel">
+      <div>
+        <div className="eyebrow">{t("Reviewing now")}</div>
+        <h3>{t("AI review in progress")}</h3>
+        <p>{t("The system is analyzing selected images. This usually takes 1-3 minutes.")}</p>
+        <p>{t("If it runs longer than a few minutes, refresh this page. Timed-out reviews will become retryable automatically.")}</p>
+      </div>
+      <div className="ai-progress-steps" aria-label={t("AI review in progress")}>
+        <span><b>{t("Step 1")}</b>{t("Image exported")}</span>
+        <span className="active"><b>{t("Step 2")}</b>{t("AI visual analysis")}</span>
+        <span><b>{t("Step 3")}</b>{t("Generating report")}</span>
+      </div>
+      <div className="ai-progress-actions">
+        <span>{t("Started {minutes} min ago", { minutes })}</span>
+        <button className="action-button" onClick={onRefresh}><RefreshCw size={15} />{t("Refresh status")}</button>
+      </div>
+    </section>
   );
 }
 

@@ -121,7 +121,7 @@ app.post("/api/vis/current", async (req, res) => {
 });
 
 app.get("/api/reviews", async (_req, res) => {
-  const db = await readDb();
+  const db = await reconcileStaleAiReviews();
   const tasks = db.tasks.map((task) => ({
     ...normalizeAiOnlyTask(task),
     frameCount: db.frames.filter((frame) => frame.taskId === task.id).length,
@@ -131,7 +131,7 @@ app.get("/api/reviews", async (_req, res) => {
 });
 
 app.get("/api/reviews/:id", async (req, res) => {
-  const db = await readDb();
+  const db = await reconcileStaleAiReviews();
   const task = db.tasks.find((item) => item.id === req.params.id);
   if (!task) return res.status(404).json({ error: "任务不存在" });
   const taskIssues = db.issues.filter((issue) => issue.taskId === task.id).map((issue) => {
@@ -237,6 +237,7 @@ app.post("/api/reviews/upload-images", async (req, res) => {
       db.tasks.unshift(task);
       db.frames.push(...frames);
       db.logs.unshift({ id: uid("log"), taskId: task.id, ...actor(req), action: `上传 ${frames.length} 张图片并创建审核任务`, createdAt: now() });
+      db.logs.unshift({ id: uid("log"), taskId: task.id, ...actor(req), action: "开始 AI 初审", createdAt: now() });
       return { task, frames };
     });
     taskId = created.task.id;
@@ -273,7 +274,7 @@ app.post("/api/reviews/upload-images", async (req, res) => {
     });
     res.json(saved);
   } catch (error) {
-    if (taskId) await setTaskStatus(taskId, "ai_review_failed");
+    if (taskId) await setTaskStatus(taskId, "ai_review_failed", "AI 初审失败，可重新发起", req);
     res.status(errorStatus(error)).json({ error: errorMessage(error) });
   }
 });
@@ -401,7 +402,7 @@ app.post("/api/reviews/:id/start-ai-review", async (req, res) => {
     if (selectedFrames.length > maxFrames) return res.status(400).json({ error: `单次最多审核 ${maxFrames} 个 Frame` });
     if (!task.figmaFileKey) return res.status(400).json({ error: "任务尚未读取 Figma 文件" });
 
-    await setTaskStatus(task.id, "ai_reviewing");
+    await setTaskStatus(task.id, "ai_reviewing", "开始 AI 初审", req);
     startedAiReview = true;
     const exports = await getFrameImages(task.figmaFileKey, selectedFrames.map((frame) => frame.figmaNodeId), "png", 2);
     selectedFrames = await mutateDb((currentDb) => {
@@ -444,7 +445,7 @@ app.post("/api/reviews/:id/start-ai-review", async (req, res) => {
     });
     res.json(saved);
   } catch (error) {
-    if (startedAiReview) await setTaskStatus(req.params.id, "ai_review_failed");
+    if (startedAiReview) await setTaskStatus(req.params.id, "ai_review_failed", "AI 初审失败，可重新发起", req);
     res.status(errorStatus(error)).json({ error: errorMessage(error) });
   }
 });
@@ -498,6 +499,7 @@ app.post("/api/reviews/:id/resubmit", async (req, res) => {
         }));
         db.frames.push(...frames);
         db.logs.unshift({ id: uid("log"), taskId: task.id, ...actor(req), action: `上传 ${frames.length} 张图片并重新提交`, createdAt: now() });
+        db.logs.unshift({ id: uid("log"), taskId: task.id, ...actor(req), action: "开始 AI 初审", createdAt: now() });
         return { task: current, frames };
       });
 
@@ -551,19 +553,59 @@ app.post("/api/reviews/:id/resubmit", async (req, res) => {
     });
     res.json({ task: updated, frames: structure.frames });
   } catch (error) {
-    if (startedResubmit) await setTaskStatus(req.params.id, resubmitSource === "upload" ? "ai_review_failed" : "figma_read_failed");
+    if (startedResubmit) await setTaskStatus(req.params.id, resubmitSource === "upload" ? "ai_review_failed" : "figma_read_failed", resubmitSource === "upload" ? "AI 初审失败，可重新发起" : "Figma 读取失败", req);
     res.status(errorStatus(error)).json({ error: errorMessage(error) });
   }
 });
 
-async function setTaskStatus(id: string, status: ReviewTask["status"]) {
+async function setTaskStatus(id: string, status: ReviewTask["status"], action?: string, req?: express.Request) {
   return mutateDb((db) => {
     const task = db.tasks.find((item) => item.id === id);
     if (!task) throw new Error("任务不存在");
     task.status = status;
     task.updatedAt = now();
+    if (action) {
+      db.logs.unshift({
+        id: uid("log"),
+        taskId: task.id,
+        ...(req ? actor(req) : { actorName: "System", actorRole: "管理员" as Role }),
+        action,
+        createdAt: now()
+      });
+    }
     return task;
   });
+}
+
+async function reconcileStaleAiReviews() {
+  const db = await readDb();
+  const staleTasks = db.tasks.filter((task) => isStaleAiReview(task, db.results));
+  if (staleTasks.length === 0) return db;
+  return mutateDb((currentDb) => {
+    currentDb.tasks.forEach((task) => {
+      if (!isStaleAiReview(task, currentDb.results)) return;
+      task.status = "ai_review_failed";
+      task.updatedAt = now();
+      currentDb.logs.unshift({
+        id: uid("log"),
+        taskId: task.id,
+        actorName: "System",
+        actorRole: "管理员",
+        action: "AI 初审超时，请刷新后重新发起",
+        createdAt: now()
+      });
+    });
+    return currentDb;
+  });
+}
+
+function isStaleAiReview(task: ReviewTask, results: Array<{ taskId: string; submissionRound: number }>) {
+  if (task.status !== "ai_reviewing") return false;
+  if (results.some((result) => result.taskId === task.id && result.submissionRound === task.submissionRound)) return false;
+  const updatedAt = Date.parse(task.updatedAt);
+  if (!Number.isFinite(updatedAt)) return false;
+  const staleMs = Number(process.env.AI_REVIEW_STALE_MINUTES ?? 6) * 60 * 1000;
+  return Date.now() - updatedAt > staleMs;
 }
 
 async function getTask(id: string) {
