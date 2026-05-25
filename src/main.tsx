@@ -1,39 +1,29 @@
 import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import {
-  Button as HeroButton,
-  Card,
-  Chip,
-  Input,
-  ListBox,
-  Select,
-  type Key,
-} from "@heroui/react";
-import {
-  ArrowLeft,
-  ChevronRight,
-  FileText,
-  Gauge,
-  Image as ImageIcon,
-  KeyRound,
-  Maximize2,
-  Minus,
-  Plus,
-  RefreshCw,
-  Settings,
-  Sparkles,
-  Trash2,
-  Undo2,
-  UploadCloud,
-} from "lucide-react";
+import ArrowLeft from "lucide-react/dist/esm/icons/arrow-left.mjs";
+import ChevronRight from "lucide-react/dist/esm/icons/chevron-right.mjs";
+import FileText from "lucide-react/dist/esm/icons/file-text.mjs";
+import Gauge from "lucide-react/dist/esm/icons/gauge.mjs";
+import ImageIcon from "lucide-react/dist/esm/icons/image.mjs";
+import KeyRound from "lucide-react/dist/esm/icons/key-round.mjs";
+import Maximize2 from "lucide-react/dist/esm/icons/maximize-2.mjs";
+import Minus from "lucide-react/dist/esm/icons/minus.mjs";
+import Plus from "lucide-react/dist/esm/icons/plus.mjs";
+import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw.mjs";
+import Settings from "lucide-react/dist/esm/icons/settings.mjs";
+import Sparkles from "lucide-react/dist/esm/icons/sparkles.mjs";
+import Trash2 from "lucide-react/dist/esm/icons/trash-2.mjs";
+import Undo2 from "lucide-react/dist/esm/icons/undo-2.mjs";
+import UploadCloud from "lucide-react/dist/esm/icons/upload-cloud.mjs";
 import "./styles.css";
 import { formatDeductionItem } from "./shared/aiDisplay";
 import { encodeHeaderValue } from "./shared/headerEncoding";
-import { filterIssues, filterTasks, IssueFilters, TaskFilters } from "./shared/filters";
+import { dashboardLanes, filterIssues, filterTasks, IssueFilters, TaskFilters } from "./shared/filters";
 import { scoreTone } from "./shared/scoreDisplay";
 import { detectPreferredLanguage, hasHanText, languageLabel, localizeDynamicText, type Language } from "./shared/i18n";
+import { validateImageFiles } from "./shared/uploads";
 
-type Role = "设计师" | "运营" | "设计总监" | "管理员";
+type Role = "设计师" | "管理员";
 type ContentType = "电商页面" | "Amazon A+ 页面" | "官网 Banner";
 type ReviewStatus =
   | "draft"
@@ -140,6 +130,9 @@ const uiCopy: Record<Language, Record<string, string>> = {
     "All tasks": "全部任务",
     "AI suggests revision": "AI 建议修改",
     "AI approved": "AI 已通过",
+    "Action required": "待我处理",
+    "AI reviewing": "AI 审核中",
+    "Exceptions / archived": "异常/已归档",
     "Reviews in progress": "审核进行中",
     "Failed tasks": "异常任务",
     "Average AI score": "平均 AI 分",
@@ -152,7 +145,7 @@ const uiCopy: Record<Language, Record<string, string>> = {
     "Empty": "暂无",
     "Filtered results": "筛选结果",
     "No tasks match the current filters": "当前筛选条件下暂无任务",
-    "No review tasks yet. Create a task and read Figma first.": "暂无审核任务。先新建任务并读取 Figma。",
+    "No review tasks yet. Create a task and start AI review first.": "暂无审核任务。先新建任务并发起 AI 初审。",
     "Search tasks": "搜索任务",
     "Search task name / Figma file / submitter": "搜索任务名 / Figma 文件 / 提交人",
     "Content type": "内容类型",
@@ -496,7 +489,7 @@ function LanguageSwitcher() {
 }
 
 function Dashboard({ session, onNew, onOpen }: { session: Session; onNew: () => void; onOpen: (id: string) => void }) {
-  const { t } = useI18n();
+  const { t, label } = useI18n();
   const { data: tasks, error, reload, loading } = useApi<Task[]>("/api/reviews", session, []);
   const [filters, setFilters] = useState<TaskFilters>({ contentType: "", status: "", submitterId: "", keyword: "", onlyMine: false });
   const hasActiveAiReview = tasks.some((task) => task.status === "ai_reviewing");
@@ -512,12 +505,10 @@ function Dashboard({ session, onNew, onOpen }: { session: Session; onNew: () => 
     failed: tasks.filter((task) => ["figma_read_failed", "ai_review_failed"].includes(task.status)).length,
     avgScore: Math.round(tasks.reduce((sum, task) => sum + (task.aiTotalScore ?? 0), 0) / Math.max(1, tasks.filter((task) => task.aiTotalScore).length))
   }), [tasks]);
-  const lanes = [
-    { key: "needs_revision", label: t("AI suggests revision"), tasks: filteredTasks.filter((task) => task.status === "needs_revision") },
-    { key: "approved", label: t("AI passed"), tasks: filteredTasks.filter((task) => task.status === "approved") },
-    { key: "in_progress", label: t("In progress"), tasks: filteredTasks.filter((task) => ["draft", "figma_reading", "frame_selection", "ai_reviewing", "resubmitted"].includes(task.status)) },
-    { key: "failed", label: t("Failed"), tasks: filteredTasks.filter((task) => ["figma_read_failed", "ai_review_failed", "archived"].includes(task.status)) }
-  ];
+  const lanes = dashboardLanes(filteredTasks, { currentUserId: session.userId, currentUserName: session.name }).map((lane) => ({
+    ...lane,
+    label: lane.key === "action_required" ? t("Action required") : lane.key === "reviewing" ? t("AI reviewing") : lane.key === "closed" ? t("Exceptions / archived") : label(lane.key)
+  }));
   useEffect(() => {
     if (!hasActiveAiReview) return;
     const timer = window.setInterval(() => reload(), 10000);
@@ -531,10 +522,10 @@ function Dashboard({ session, onNew, onOpen }: { session: Session; onNew: () => 
           <h1>Hi,{session.name}</h1>
           <p>{t("Track review queues, AI pre-review results, revision risks, and VIS sources.")}</p>
         </div>
-        <HeroButton variant="primary" className="hero-button" onPress={onNew}>
+        <button className="hero-button primary" type="button" onClick={onNew}>
           <UploadCloud size={16} />
           {t("New review task")}
-        </HeroButton>
+        </button>
       </section>
       <section className="metrics-board">
         <Metric label={t("All tasks")} value={groups.total} accent="+ live" tone="live" />
@@ -547,40 +538,40 @@ function Dashboard({ session, onNew, onOpen }: { session: Session; onNew: () => 
       <section className="dashboard-grid">
         <div className="queue-tools">
           <h2>{t("Review Queue")}</h2>
-          <HeroButton variant="secondary" className="hero-button subtle" onPress={reload}><RefreshCw size={15} />{t("Refresh")}</HeroButton>
+          <button className="hero-button subtle" type="button" onClick={reload}><RefreshCw size={15} />{t("Refresh")}</button>
         </div>
         {error && <div className="error">{error}</div>}
         <TaskFilterBar filters={filters} onChange={setFilters} />
         <div className="queue-board">
-          {loading && <Card className="hero-panel"><Card.Content>{t("Loading tasks...")}</Card.Content></Card>}
+          {loading && <div className="hero-panel"><div>{t("Loading tasks...")}</div></div>}
           {lanes.slice(0, 2).map((lane) => (
-            <Card className="queue-lane queue-lane-primary" key={lane.key}>
-              <Card.Content className="queue-lane-body">
-                <div className="lane-head"><h3>{lane.label}</h3><Chip size="sm" color="accent" variant="soft">{lane.tasks.length}</Chip></div>
+            <div className="queue-lane queue-lane-primary" key={lane.key}>
+              <div className="queue-lane-body">
+                <div className="lane-head"><h3>{lane.label}</h3><span className="chip-soft">{lane.tasks.length}</span></div>
                 {lane.tasks.map((task) => <TaskCard task={task} onOpen={onOpen} key={task.id} />)}
                 {lane.tasks.length === 0 && <div className="lane-empty">{t("Empty")}</div>}
-              </Card.Content>
-            </Card>
+              </div>
+            </div>
           ))}
           <div className="queue-side-stack">
             {lanes.slice(2).map((lane) => (
-              <Card className="queue-lane queue-lane-compact" key={lane.key}>
-                <Card.Content className="queue-lane-body">
-                  <div className="lane-head"><h3>{lane.label}</h3><Chip size="sm" color="accent" variant="soft">{lane.tasks.length}</Chip></div>
+              <div className="queue-lane queue-lane-compact" key={lane.key}>
+                <div className="queue-lane-body">
+                  <div className="lane-head"><h3>{lane.label}</h3><span className="chip-soft">{lane.tasks.length}</span></div>
                   {lane.tasks.slice(0, 2).map((task) => <TaskCard task={task} onOpen={onOpen} key={task.id} compact />)}
                   {lane.tasks.length === 0 && <div className="lane-empty">{t("Empty")}</div>}
-                </Card.Content>
-              </Card>
+                </div>
+              </div>
             ))}
           </div>
-          <Card className="queue-lane wide">
-            <Card.Content className="queue-lane-body">
-              <div className="lane-head"><h3>{t("Filtered results")}</h3><Chip size="sm" color="accent" variant="soft">{filteredTasks.length}</Chip></div>
+          <div className="queue-lane wide">
+            <div className="queue-lane-body">
+              <div className="lane-head"><h3>{t("Filtered results")}</h3><span className="chip-soft">{filteredTasks.length}</span></div>
               {filteredTasks.slice(0, 8).map((task) => <TaskCard task={task} onOpen={onOpen} key={task.id} compact />)}
               {!loading && filteredTasks.length === 0 && tasks.length > 0 && <div className="lane-empty">{t("No tasks match the current filters")}</div>}
-            </Card.Content>
-          </Card>
-          {!loading && tasks.length === 0 && <div className="empty">{t("No review tasks yet. Create a task and read Figma first.")}</div>}
+            </div>
+          </div>
+          {!loading && tasks.length === 0 && <div className="empty">{t("No review tasks yet. Create a task and start AI review first.")}</div>}
         </div>
       </section>
     </main>
@@ -591,63 +582,46 @@ function TaskFilterBar({ filters, onChange }: { filters: TaskFilters; onChange: 
   const { t, label } = useI18n();
   const selectedContentType = filters.contentType || "all";
   const selectedStatus = filters.status || "all";
-  const nextKey = (value: Key | Key[] | null) => Array.isArray(value) ? value[0] : value;
   return (
-    <Card className="filter-bar hero-filter-bar">
-      <Card.Content className="task-card-body">
-        <Input
+    <div className="filter-bar hero-filter-bar">
+      <div className="task-card-body">
+        <input
           aria-label={t("Search tasks")}
           placeholder={t("Search task name / Figma file / submitter")}
           value={filters.keyword ?? ""}
           onChange={(event) => onChange({ ...filters, keyword: event.target.value })}
-          variant="secondary"
         />
-        <Select
+        <select
           aria-label={t("Content type")}
           value={selectedContentType}
-          onChange={(value) => {
-            const key = nextKey(value);
-            onChange({ ...filters, contentType: key === "all" || key == null ? "" : String(key) });
-          }}
-          variant="secondary"
+          onChange={(event) => onChange({ ...filters, contentType: event.target.value === "all" ? "" : event.target.value })}
         >
-          <Select.Trigger><Select.Value /></Select.Trigger>
-          <Select.Popover><ListBox>
-            <ListBox.Item id="all" textValue={t("All types")}>{t("All types")}</ListBox.Item>
-            <ListBox.Item id="电商页面" textValue={label("电商页面")}>{label("电商页面")}</ListBox.Item>
-            <ListBox.Item id="Amazon A+ 页面" textValue={label("Amazon A+ 页面")}>{label("Amazon A+ 页面")}</ListBox.Item>
-            <ListBox.Item id="官网 Banner" textValue={label("官网 Banner")}>{label("官网 Banner")}</ListBox.Item>
-          </ListBox></Select.Popover>
-        </Select>
-        <Select
+          <option value="all">{t("All types")}</option>
+          <option value="电商页面">{label("电商页面")}</option>
+          <option value="Amazon A+ 页面">{label("Amazon A+ 页面")}</option>
+          <option value="官网 Banner">{label("官网 Banner")}</option>
+        </select>
+        <select
           aria-label={t("Task status")}
           value={selectedStatus}
-          onChange={(value) => {
-            const key = nextKey(value);
-            onChange({ ...filters, status: key === "all" || key == null ? "" : String(key) });
-          }}
-          variant="secondary"
+          onChange={(event) => onChange({ ...filters, status: event.target.value === "all" ? "" : event.target.value })}
         >
-          <Select.Trigger><Select.Value /></Select.Trigger>
-          <Select.Popover><ListBox>
-            <ListBox.Item id="all" textValue={t("All statuses")}>{t("All statuses")}</ListBox.Item>
-            <ListBox.Item id="needs_revision" textValue={label("needs_revision")}>{label("needs_revision")}</ListBox.Item>
-            <ListBox.Item id="approved" textValue={label("approved")}>{label("approved")}</ListBox.Item>
-            <ListBox.Item id="frame_selection" textValue={label("frame_selection")}>{label("frame_selection")}</ListBox.Item>
-            <ListBox.Item id="ai_reviewing" textValue={label("ai_reviewing")}>{label("ai_reviewing")}</ListBox.Item>
-            <ListBox.Item id="failed" textValue={label("failed")}>{label("failed")}</ListBox.Item>
-          </ListBox></Select.Popover>
-        </Select>
-        <Input
+          <option value="all">{t("All statuses")}</option>
+          <option value="action_required">{label("action_required")}</option>
+          <option value="reviewing">{label("reviewing")}</option>
+          <option value="needs_revision">{label("needs_revision")}</option>
+          <option value="approved">{label("approved")}</option>
+          <option value="closed">{label("closed")}</option>
+        </select>
+        <input
           aria-label={t("Submitter ID")}
           placeholder={t("Submitter ID")}
           value={filters.submitterId ?? ""}
           onChange={(event) => onChange({ ...filters, submitterId: event.target.value })}
-          variant="secondary"
         />
-        <HeroButton variant="secondary" className="hero-button subtle" onPress={() => onChange({ ...filters, contentType: "", status: "", submitterId: "", keyword: "" })}>{t("Reset")}</HeroButton>
-      </Card.Content>
-    </Card>
+        <button className="hero-button subtle" type="button" onClick={() => onChange({ ...filters, contentType: "", status: "", submitterId: "", keyword: "" })}>{t("Reset")}</button>
+      </div>
+    </div>
   );
 }
 
@@ -655,14 +629,14 @@ function TaskCard({ task, onOpen, compact = false }: { task: Task; onOpen: (id: 
   const { t, label } = useI18n();
   const isReviewing = task.status === "ai_reviewing";
   return (
-    <Card className={`task-card ${compact ? "compact" : ""}`} role="button" tabIndex={0} onClick={() => onOpen(task.id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onOpen(task.id); }}>
-      <Card.Content className="task-card-body">
+    <button className={`task-card ${compact ? "compact" : ""}`} type="button" onClick={() => onOpen(task.id)}>
+      <div className="task-card-body">
         <div className="task-info">
           <div className="task-title">{task.title}</div>
           <div className="meta">{label(task.contentType)} · {task.submitterName}{task.submitterId ? ` #${task.submitterId}` : ""}</div>
         </div>
         <div className="task-stats">
-          <Chip size="sm" variant="soft" className={`status ${task.status}`}>{label(task.status)}</Chip>
+          <span className={`status ${task.status}`}>{label(task.status)}</span>
           <span className={`score-chip score-chip--${scoreTone(task.aiTotalScore)}`}>{task.aiTotalScore ?? "--"}</span>
         </div>
         {isReviewing && (
@@ -670,8 +644,8 @@ function TaskCard({ task, onOpen, compact = false }: { task: Task; onOpen: (id: 
             <span>{t("AI visual analysis")}</span>
           </div>
         )}
-      </Card.Content>
-    </Card>
+      </div>
+    </button>
   );
 }
 
@@ -722,10 +696,14 @@ function NewTask({ session, onBack, onFrames, onDetail }: { session: Session; on
     try {
       const files = Array.from(fileList);
       if (images.length + files.length > maxUploadImages) throw new Error(t("A task can include at most {count} images", { count: maxUploadImages }));
-      const accepted = files.map((file) => {
-        if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) throw new Error(t("Only PNG, JPG, and WebP images are supported"));
-        if (file.size > 20 * 1024 * 1024) throw new Error(t("A single image cannot exceed 20MB"));
-        return file;
+      const accepted = validateImageFiles(files, {
+        currentCount: images.length,
+        maxCount: maxUploadImages,
+        messages: {
+          tooMany: t("A task can include at most {count} images", { count: maxUploadImages }),
+          unsupported: t("Only PNG, JPG, and WebP images are supported"),
+          tooLarge: t("A single image cannot exceed 20MB")
+        }
       });
       const drafts = await Promise.all(accepted.map((file) => readImageDraft(file, t("Image read failed"))));
       setImages((current) => [...current, ...drafts]);
@@ -906,6 +884,7 @@ function FrameSelection({ session, taskId, onBack, onDetail }: { session: Sessio
 function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Session; taskId: string; onFrames: () => void; onDashboard: () => void }) {
   const { t, label, dynamic } = useI18n();
   const { data, error: loadError, reload } = useApi<Detail>(`/api/reviews/${taskId}`, session, null as any);
+  const { data: health } = useApi<any>("/api/health", session, null);
   const [activeFrameId, setActiveFrameId] = useState("");
   const [zoom, setZoom] = useState(100);
   const [editingMeta, setEditingMeta] = useState(false);
@@ -927,6 +906,7 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
   const visibleAnnotatedIssues = filteredIssues.filter((issue) => issue.annotationSuggestion && (!issue.frameName || !activeFrame?.frameName || issue.frameName === activeFrame.frameName));
   const annotationIndexByIssueId = new Map(visibleAnnotatedIssues.map((issue, index) => [issue.id, index + 1]));
   const aiReviewing = data?.task.status === "ai_reviewing";
+  const maxUploadImages = Number(health?.maxUploadImagesPerTask ?? 9);
   const reviewUpdatedAt = data?.task.updatedAt ? Date.parse(data.task.updatedAt) : NaN;
   const reviewAgeMinutes = Number.isFinite(reviewUpdatedAt) ? Math.max(0, Math.floor((Date.now() - reviewUpdatedAt) / 60000)) : 0;
 
@@ -955,11 +935,14 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
     setResubmitBusy(true);
     try {
       const files = Array.from(fileList);
-      if (files.length > 9) throw new Error(t("A task can include at most {count} images", { count: 9 }));
-      const accepted = files.map((file) => {
-        if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) throw new Error(t("Only PNG, JPG, and WebP images are supported"));
-        if (file.size > 20 * 1024 * 1024) throw new Error(t("A single image cannot exceed 20MB"));
-        return file;
+      const accepted = validateImageFiles(files, {
+        currentCount: 0,
+        maxCount: maxUploadImages,
+        messages: {
+          tooMany: t("A task can include at most {count} images", { count: maxUploadImages }),
+          unsupported: t("Only PNG, JPG, and WebP images are supported"),
+          tooLarge: t("A single image cannot exceed 20MB")
+        }
       });
       const images = await Promise.all(accepted.map((file) => readImageDraft(file, t("Image read failed"))));
       await api(`/api/reviews/${taskId}/resubmit`, session, {
@@ -1030,7 +1013,9 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
 
   if (!data) return <main className="workspace"><div className="panel">{t("Loading review details...")}</div></main>;
   const canWithdraw = ["frame_selection", "needs_revision", "resubmitted", "figma_read_failed", "ai_review_failed"].includes(data.task.status);
-  const canDelete = ["draft", "figma_reading", "frame_selection", "ai_reviewing", "needs_revision", "resubmitted", "approved", "archived", "figma_read_failed", "ai_review_failed"].includes(data.task.status);
+  const currentUserKeys = [session.userId, session.name].map((value) => String(value ?? "").trim().toLowerCase()).filter(Boolean);
+  const ownsTask = [data.task.submitterId, data.task.submitterName].map((value) => String(value ?? "").trim().toLowerCase()).some((value) => currentUserKeys.includes(value));
+  const canDelete = (session.role === "管理员" || ownsTask) && ["draft", "figma_reading", "frame_selection", "ai_reviewing", "needs_revision", "resubmitted", "approved", "archived", "figma_read_failed", "ai_review_failed"].includes(data.task.status);
 
   return (
     <main className="workspace detail">
@@ -1447,12 +1432,12 @@ function SettingsPage({ session }: { session: Session }) {
 
 function Metric({ label, value, accent, tone = "live" }: { label: string; value: number; accent?: string; tone?: "live" | "revision" | "success" | "queue" | "danger" | "score" }) {
   return (
-    <Card className={`metric metric--${tone}`}>
-      <Card.Content className="metric-body">
+    <div className={`metric metric--${tone}`}>
+      <div className="metric-body">
         <div className="metric-head"><span>{label}</span>{accent ? <em>{accent}</em> : null}</div>
         <strong>{value}</strong>
-      </Card.Content>
-    </Card>
+      </div>
+    </div>
   );
 }
 

@@ -11,6 +11,11 @@ const designerHeaders = {
   "x-actor-name": encodeURIComponent("Hale"),
   "x-actor-role": encodeURIComponent("设计师")
 };
+const adminHeaders = {
+  "x-access-code": "emke.de",
+  "x-actor-name": encodeURIComponent("Admin"),
+  "x-actor-role": encodeURIComponent("管理员")
+};
 
 beforeEach(() => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "emke-api-storage-"));
@@ -275,6 +280,68 @@ describe("API validation and health", () => {
     const db = await readDb();
     expect(db.results.filter((result) => result.taskId === taskId).map((result) => result.submissionRound)).toEqual([1, 2]);
     expect(db.frames.filter((frame) => frame.taskId === taskId).map((frame) => frame.frameName)).toEqual(["round-2.jpg"]);
+  });
+
+  it("keeps retired human review endpoints explicit for legacy clients", async () => {
+    const operationResponse = await request(app)
+      .post("/api/reviews/task_legacy/operation-review")
+      .set(designerHeaders)
+      .send({});
+    const directorResponse = await request(app)
+      .post("/api/reviews/task_legacy/director-decision")
+      .set(designerHeaders)
+      .send({});
+
+    expect(operationResponse.status).toBe(410);
+    expect(operationResponse.body.error).toContain("AI 审核直接给出结论");
+    expect(directorResponse.status).toBe(410);
+    expect(directorResponse.body.error).toContain("AI 审核直接给出结论");
+  });
+
+  it("allows designers to delete their own tasks but blocks deleting another submitter's task", async () => {
+    await mutateDb((db) => {
+      db.tasks.push(
+        {
+          id: "task_own_delete",
+          title: "Own task",
+          contentType: "官网 Banner",
+          description: "",
+          source: "upload",
+          status: "needs_revision",
+          priority: "普通",
+          submitterName: "Hale",
+          submitterId: "Hale",
+          submitterRole: "设计师",
+          createdAt: "2026-05-13T00:00:00.000Z",
+          updatedAt: "2026-05-13T00:00:00.000Z",
+          submissionRound: 1
+        },
+        {
+          id: "task_other_delete",
+          title: "Other task",
+          contentType: "官网 Banner",
+          description: "",
+          source: "upload",
+          status: "needs_revision",
+          priority: "普通",
+          submitterName: "Other",
+          submitterId: "Other",
+          submitterRole: "设计师",
+          createdAt: "2026-05-13T00:00:00.000Z",
+          updatedAt: "2026-05-13T00:00:00.000Z",
+          submissionRound: 1
+        }
+      );
+    });
+
+    const ownResponse = await request(app).delete("/api/reviews/task_own_delete").set(designerHeaders);
+    const otherResponse = await request(app).delete("/api/reviews/task_other_delete").set(designerHeaders);
+    const adminResponse = await request(app).delete("/api/reviews/task_other_delete").set(adminHeaders);
+
+    expect(ownResponse.status).toBe(200);
+    expect(otherResponse.status).toBe(403);
+    expect(otherResponse.body.error).toContain("无权删除他人任务");
+    expect(adminResponse.status).toBe(200);
   });
 });
 

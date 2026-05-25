@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { assertRole, assertTransition, canDeleteTaskStatus, canWithdrawTaskStatus, getAiDecisionStatus, getPreviousIssueRound } from "../server/services/workflow";
+import { assertCanDeleteTask, assertRole, assertTransition, canDeleteTaskStatus, canWithdrawTaskStatus, getAiDecisionStatus, getPreviousIssueRound, normalizeAiOnlyStatus } from "../server/services/workflow";
 import { normalizeAiReview, reviewRubric, toReviewIssue } from "../server/services/aiReview";
-import { filterIssues, filterTasks } from "../src/shared/filters";
+import { dashboardLanes, filterIssues, filterTasks } from "../src/shared/filters";
+import { validateImageFiles } from "../src/shared/uploads";
 
 const baseTask = {
   id: "task_1",
@@ -46,6 +47,18 @@ describe("workflow guards", () => {
     expect(canDeleteTaskStatus("frame_selection")).toBe(true);
     expect(canDeleteTaskStatus("needs_revision")).toBe(true);
     expect(canDeleteTaskStatus("ai_reviewing")).toBe(true);
+  });
+
+  it("maps legacy human-review statuses into the AI-only result model", () => {
+    expect(normalizeAiOnlyStatus("operation_review", 90)).toBe("approved");
+    expect(normalizeAiOnlyStatus("director_review", 76)).toBe("needs_revision");
+    expect(normalizeAiOnlyStatus("approved", 72)).toBe("needs_revision");
+  });
+
+  it("allows designers to delete their own tasks and admins to delete any task", () => {
+    expect(() => assertCanDeleteTask("设计师", { submitterId: "EMKE-Hale", submitterName: "Hale" }, "EMKE-Hale")).not.toThrow();
+    expect(() => assertCanDeleteTask("设计师", { submitterId: "Other", submitterName: "Other" }, "EMKE-Hale")).toThrow("当前身份无权删除他人任务");
+    expect(() => assertCanDeleteTask("管理员", { submitterId: "Other", submitterName: "Other" }, "Admin")).not.toThrow();
   });
 });
 
@@ -261,6 +274,32 @@ describe("front-end filters", () => {
     });
 
     expect(result.map((task) => task.id)).toEqual(["task_1"]);
+  });
+
+  it("groups dashboard lanes by the user's next action in the AI-only workflow", () => {
+    const tasks = [
+      { ...baseTask, id: "task_frame", status: "frame_selection", submitterId: "EMKE-Hale" },
+      { ...baseTask, id: "task_failed", status: "ai_review_failed", submitterId: "Other", submitterName: "Other" },
+      { ...baseTask, id: "task_mine_revision", status: "needs_revision", submitterId: "EMKE-Hale" },
+      { ...baseTask, id: "task_other_revision", status: "needs_revision", submitterId: "Other", submitterName: "Other" },
+      { ...baseTask, id: "task_reviewing", status: "ai_reviewing", submitterId: "Other", submitterName: "Other" },
+      { ...baseTask, id: "task_approved", status: "approved", submitterId: "Other", submitterName: "Other" },
+      { ...baseTask, id: "task_archived", status: "archived", submitterId: "Other", submitterName: "Other" }
+    ] as any[];
+
+    const lanes = dashboardLanes(tasks, { currentUserId: "EMKE-Hale", currentUserName: "Hale" });
+
+    expect(lanes.find((lane) => lane.key === "action_required")?.tasks.map((task) => task.id)).toEqual(["task_frame", "task_failed", "task_mine_revision"]);
+    expect(lanes.find((lane) => lane.key === "needs_revision")?.tasks.map((task) => task.id)).toEqual(["task_other_revision"]);
+    expect(lanes.find((lane) => lane.key === "reviewing")?.tasks.map((task) => task.id)).toEqual(["task_reviewing"]);
+    expect(lanes.find((lane) => lane.key === "approved")?.tasks.map((task) => task.id)).toEqual(["task_approved"]);
+    expect(lanes.find((lane) => lane.key === "closed")?.tasks.map((task) => task.id)).toEqual(["task_archived"]);
+  });
+
+  it("validates upload batches with the same helper for create and resubmit flows", () => {
+    expect(() => validateImageFiles([{ name: "hero.png", type: "image/png", size: 1024 }], { currentCount: 1, maxCount: 1 })).toThrow("单个项目最多上传 1 张图片");
+    expect(() => validateImageFiles([{ name: "hero.gif", type: "image/gif", size: 1024 }], { currentCount: 0, maxCount: 9 })).toThrow("仅支持 PNG、JPG、WebP 图片");
+    expect(() => validateImageFiles([{ name: "hero.png", type: "image/png", size: 21 * 1024 * 1024 }], { currentCount: 0, maxCount: 9 })).toThrow("单张图片不能超过 20MB");
   });
 
   it("filters issues by frame, type, severity, must-fix, and resolution status", () => {

@@ -9,7 +9,10 @@ export function isLanguage(value: unknown): value is Language {
 export function detectPreferredLanguage(savedLanguage: unknown, browserLanguages: readonly string[]): Language {
   if (isLanguage(savedLanguage)) return savedLanguage;
   const normalized = browserLanguages.map((language) => language.toLowerCase());
-  if (normalized.some((language) => language.startsWith("zh"))) return "zh";
+  for (const language of normalized) {
+    if (language.startsWith("zh")) return "zh";
+    if (language.startsWith("en")) return "en";
+  }
   return "en";
 }
 
@@ -27,6 +30,9 @@ const labels: Record<Language, Record<string, string>> = {
     "ai_review_failed": "AI 审核失败",
     "failed": "失败",
     "in_progress": "进行中",
+    "action_required": "待我处理",
+    "reviewing": "审核中",
+    "closed": "异常/已归档",
     "电商页面": "电商页面",
     "Amazon A+ 页面": "Amazon A+ 页面",
     "官网 Banner": "官网 Banner",
@@ -58,6 +64,9 @@ const labels: Record<Language, Record<string, string>> = {
     "ai_review_failed": "AI review failed",
     "failed": "Failed",
     "in_progress": "In progress",
+    "action_required": "Action required",
+    "reviewing": "Reviewing",
+    "closed": "Exceptions / archived",
     "电商页面": "E-commerce page",
     "Amazon A+ 页面": "Amazon A+ page",
     "官网 Banner": "Website banner",

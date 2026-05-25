@@ -7,7 +7,7 @@ import { loadBrandStandardAsync, parseMarkdownSections, saveUploadedBrandStandar
 import { getAiProviderConfig, getAiProviderConfigAsync, getDefaultAiModel, getDefaultAiModelAsync, runAiReview, saveAiProviderConfigAsync, toReviewIssue } from "./services/aiReview.js";
 import { ContentType, ReviewFrame, ReviewTask, Role } from "./types.js";
 import { decodeHeaderValue } from "../src/shared/headerEncoding.js";
-import { assertRole, assertTransition, canDeleteTaskStatus, canWithdrawTaskStatus, getAiDecisionStatus, getPreviousIssueRound } from "./services/workflow.js";
+import { assertCanDeleteTask, assertRole, assertTransition, canDeleteTaskStatus, canWithdrawTaskStatus, getAiDecisionStatus, getPreviousIssueRound, normalizeAiOnlyStatus } from "./services/workflow.js";
 
 dotenv.config();
 
@@ -317,11 +317,13 @@ app.post("/api/reviews/:id/withdraw", async (req, res) => {
 
 app.delete("/api/reviews/:id", async (req, res) => {
   try {
-    assertRole(actor(req).actorRole, ["设计师"], "删除任务");
+    const currentActor = actor(req);
+    assertRole(currentActor.actorRole, ["设计师"], "删除任务");
     await mutateDb((db) => {
       const task = db.tasks.find((item) => item.id === req.params.id);
       if (!task) throw new Error("任务不存在");
       if (!canDeleteTaskStatus(normalizeAiOnlyStatus(task.status, task.aiTotalScore))) throw new Error("当前状态不允许删除任务");
+      assertCanDeleteTask(currentActor.actorRole, task, currentActor.actorName);
       db.tasks = db.tasks.filter((item) => item.id !== task.id);
       db.frames = db.frames.filter((item) => item.taskId !== task.id);
       db.results = db.results.filter((item) => item.taskId !== task.id);
@@ -661,16 +663,6 @@ function normalizeUploadedImages(images: any[]) {
 
 function normalizeAiOnlyTask(task: ReviewTask): ReviewTask {
   return { ...task, status: normalizeAiOnlyStatus(task.status, task.aiTotalScore) };
-}
-
-function normalizeAiOnlyStatus(status: ReviewTask["status"], score?: number): ReviewTask["status"] {
-  if (status === "operation_review" || status === "director_review") {
-    return typeof score === "number" && score >= 85 ? "approved" : "needs_revision";
-  }
-  if (status === "approved" && typeof score === "number" && score < 85) {
-    return "needs_revision";
-  }
-  return status;
 }
 
 function errorStatus(error: unknown) {
