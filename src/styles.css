@@ -1469,6 +1469,24 @@ textarea:focus {
   border-top: 1px solid var(--separator);
 }
 
+.language-switcher {
+  gap: 4px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid color-mix(in oklch, var(--border) 88%, transparent);
+  border-radius: calc(var(--radius) + .5rem);
+  overflow: hidden;
+}
+
+.language-switcher button {
+  min-height: 34px;
+  border-radius: calc(var(--field-radius) - 5px);
+}
+
+.sidebar-footer .language-switcher {
+  width: 100%;
+}
+
 .sidebar-user {
   grid-template-columns: 42px 1fr;
   padding: 10px;
