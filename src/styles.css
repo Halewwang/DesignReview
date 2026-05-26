@@ -3231,6 +3231,7 @@ nav button,
   border: 1px solid var(--separator);
   border-radius: 22px;
   overflow: hidden;
+  font-weight: 300;
 }
 
 .queue-tools {
@@ -3239,7 +3240,24 @@ nav button,
 }
 
 .queue-tools h2 {
+  font-weight: 600;
   line-height: 1.2;
+}
+
+.queue-tools .hero-button.subtle {
+  min-height: 38px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 13px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.queue-tools .hero-button.subtle svg {
+  flex: 0 0 auto;
 }
 
 .hero-filter-bar {
@@ -3262,6 +3280,15 @@ nav button,
   padding-left: 14px;
   padding-right: 14px;
   border-radius: 14px;
+}
+
+.hero-filter-bar .hero-button.subtle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  line-height: 1;
+  text-align: center;
 }
 
 .hero-filter-bar select {
