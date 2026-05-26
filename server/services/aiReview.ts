@@ -431,17 +431,43 @@ function mockReview(
 ) {
   const issues = frames.slice(0, 3).map((frame, index) => ({
     title: index === 0 ? "卖点层级与产品证明信息需要加强" : "局部信息节奏不够稳定",
+    title_i18n:
+      index === 0
+        ? { zh: "卖点层级与产品证明信息需要加强", en: "Selling point hierarchy and product proof need to be strengthened" }
+        : { zh: "局部信息节奏不够稳定", en: "The local information rhythm is not stable enough" },
     type: index === 0 ? "电商表达" : "排版规范",
     severity: index === 0 ? "中等" : "轻微",
     frame_name: frame.frameName,
     location_description: index === 0 ? "主视觉右侧卖点区域" : "模块标题与说明文字区域",
+    location_description_i18n:
+      index === 0
+        ? { zh: "主视觉右侧卖点区域", en: "Selling point area on the right side of the hero visual" }
+        : { zh: "模块标题与说明文字区域", en: "Module headline and supporting copy area" },
     description:
       task.contentType === "Amazon A+ 页面"
         ? "当前模块有产品信息，但 feature headline、benefit 与 proof/specification 的关系还不够清楚。"
         : "当前画面具备基础方向，但核心承诺、产品质感和行动路径需要更直接。",
+    description_i18n:
+      task.contentType === "Amazon A+ 页面"
+        ? {
+            zh: "当前模块有产品信息，但 feature headline、benefit 与 proof/specification 的关系还不够清楚。",
+            en: "The current module includes product information, but the relationship between the feature headline, benefit, and proof or specification is still unclear."
+          }
+        : {
+            zh: "当前画面具备基础方向，但核心承诺、产品质感和行动路径需要更直接。",
+            en: "The current visual has a clear basic direction, but the core promise, product quality cues, and action path need to be more direct."
+          },
     suggestion: "压缩泛化文案，保留一个核心卖点，并补充可验证的规格或场景证明。",
+    suggestion_i18n: {
+      zh: "压缩泛化文案，保留一个核心卖点，并补充可验证的规格或场景证明。",
+      en: "Reduce generic copy, keep one core selling point, and add verifiable specification or usage-scenario proof."
+    },
     related_standard_source: "品牌设计规范.md",
     related_standard_section: task.contentType === "Amazon A+ 页面" ? "Amazon PDP / A+ Content Rules" : "Design Principles",
+    related_standard_section_i18n:
+      task.contentType === "Amazon A+ 页面"
+        ? { zh: "Amazon PDP / A+ Content Rules", en: "Amazon PDP / A+ Content Rules" }
+        : { zh: "Design Principles", en: "Design Principles" },
     must_fix: index === 0,
     annotation_suggestion:
       index === 0
@@ -451,16 +477,16 @@ function mockReview(
 
   const dimension_scores = previousIssues.length
     ? {
-        brand_consistency: { score: 25, max_score: 30, comment: "品牌气质比上一轮更稳定，但仍需减少泛化视觉语言。", deduction_items: ["产品质感与 EMKE 克制理性气质的关联还可加强"] },
-        layout_standard: { score: 25, max_score: 30, comment: "层级和阅读路径已有改善，局部模块节奏仍可收紧。", deduction_items: ["局部留白节奏与画面主体未形成足够明确的阅读路径"] },
-        ecommerce_expression: { score: 20, max_score: 25, comment: "卖点表达更直接，但 proof/specification 仍不足。", deduction_items: ["核心卖点缺少 proof/specification 支撑"] },
-        delivery_standard: { score: 12, max_score: 15, comment: "未发现严重交付错误，需继续确认渠道尺寸适配。", deduction_items: ["需确认最终渠道尺寸与移动端压缩可读性"] }
+        brand_consistency: dimensionScore(25, 30, "品牌气质比上一轮更稳定，但仍需减少泛化视觉语言。", "The brand tone is more stable than the previous round, but generic visual language still needs to be reduced.", [["产品质感与 EMKE 克制理性气质的关联还可加强", "The connection between product texture and EMKE's restrained, rational tone can still be strengthened."]]),
+        layout_standard: dimensionScore(25, 30, "层级和阅读路径已有改善，局部模块节奏仍可收紧。", "Hierarchy and reading flow have improved, while the rhythm of some modules can still be tightened.", [["局部留白节奏与画面主体未形成足够明确的阅读路径", "The local spacing rhythm and main visual subject do not yet form a sufficiently clear reading path."]]),
+        ecommerce_expression: dimensionScore(20, 25, "卖点表达更直接，但 proof/specification 仍不足。", "The selling point is more direct, but proof or specification support is still insufficient.", [["核心卖点缺少 proof/specification 支撑", "The core selling point lacks proof or specification support."]]),
+        delivery_standard: dimensionScore(12, 15, "未发现严重交付错误，需继续确认渠道尺寸适配。", "No critical delivery issue was found, but channel size adaptation still needs confirmation.", [["需确认最终渠道尺寸与移动端压缩可读性", "Final channel dimensions and mobile compressed readability still need to be confirmed."]])
       }
     : {
-        brand_consistency: { score: 23, max_score: 30, comment: "整体接近 warm-minimal 与 rational clarity，但仍需控制视觉噪音。", deduction_items: ["局部氛围偏泛化，品牌识别点不够集中", "产品质感与 EMKE 克制理性气质的关联还可加强"] },
-        layout_standard: { score: 22, max_score: 30, comment: "有基础栅格感，局部模块节奏和阅读路径需要收紧。", deduction_items: ["标题、促销数字和说明文字之间层级关系不够稳定", "局部留白节奏与画面主体未形成明确阅读路径"] },
-        ecommerce_expression: { score: 19, max_score: 25, comment: "产品优先级明确，但卖点证明和规格支撑不足。", deduction_items: ["核心卖点缺少 proof/specification 支撑", "CTA 或行动路径不够明确"] },
-        delivery_standard: { score: 12, max_score: 15, comment: "未发现严重交付错误，需继续确认渠道尺寸适配。", deduction_items: ["需确认最终渠道尺寸与移动端压缩可读性"] }
+        brand_consistency: dimensionScore(23, 30, "整体接近 warm-minimal 与 rational clarity，但仍需控制视觉噪音。", "The overall direction is close to warm minimalism and rational clarity, but visual noise still needs to be controlled.", [["局部氛围偏泛化，品牌识别点不够集中", "Some areas feel generic, and the brand recognition cues are not focused enough."], ["产品质感与 EMKE 克制理性气质的关联还可加强", "The connection between product texture and EMKE's restrained, rational tone can still be strengthened."]]),
+        layout_standard: dimensionScore(22, 30, "有基础栅格感，局部模块节奏和阅读路径需要收紧。", "There is a basic sense of grid structure, but local module rhythm and reading flow need tightening.", [["标题、促销数字和说明文字之间层级关系不够稳定", "The hierarchy between the headline, promotional numbers, and supporting copy is not stable enough."], ["局部留白节奏与画面主体未形成明确阅读路径", "The local spacing rhythm and main visual subject do not form a clear reading path."]]),
+        ecommerce_expression: dimensionScore(19, 25, "产品优先级明确，但卖点证明和规格支撑不足。", "Product priority is clear, but selling point proof and specification support are insufficient.", [["核心卖点缺少 proof/specification 支撑", "The core selling point lacks proof or specification support."], ["CTA 或行动路径不够明确", "The CTA or action path is not clear enough."]]),
+        delivery_standard: dimensionScore(12, 15, "未发现严重交付错误，需继续确认渠道尺寸适配。", "No critical delivery issue was found, but channel size adaptation still needs confirmation.", [["需确认最终渠道尺寸与移动端压缩可读性", "Final channel dimensions and mobile compressed readability still need to be confirmed."]])
       };
 
   return {
@@ -471,6 +497,17 @@ function mockReview(
     veto_issues: [],
     issues,
     revision_comparison: compareIssues(previousIssues, issues as any)
+  };
+}
+
+function dimensionScore(score: number, maxScore: number, zhComment: string, enComment: string, deductions: Array<[string, string]>) {
+  return {
+    score,
+    max_score: maxScore,
+    comment: zhComment,
+    comment_i18n: { zh: zhComment, en: enComment },
+    deduction_items: deductions.map(([zh]) => zh),
+    deduction_items_i18n: deductions.map(([zh, en]) => ({ zh, en }))
   };
 }
 

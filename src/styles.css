@@ -2889,12 +2889,30 @@ nav button,
   border-radius: 999px;
 }
 
+.detail-tag-block .status {
+  margin: 0;
+  white-space: nowrap;
+}
+
 .preview-toolbar {
-  grid-template-columns: minmax(140px, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
 }
 
 .preview-action-row {
   justify-self: end;
+}
+
+.frame-tabs {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.frame-tabs button {
+  max-width: min(100%, 420px);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .zoom-controls {
@@ -3775,5 +3793,33 @@ nav button,
   .frame-head-actions {
     justify-content: flex-start;
     flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 1280px) {
+  .preview-toolbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .preview-action-row {
+    grid-column: 1 / -1;
+    justify-self: start;
+    flex-wrap: wrap;
+  }
+
+  .zoom-controls {
+    justify-self: end;
+  }
+}
+
+@media (max-width: 980px) {
+  .preview-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .preview-action-row,
+  .zoom-controls {
+    grid-column: auto;
+    justify-self: start;
   }
 }

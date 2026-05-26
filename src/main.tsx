@@ -21,6 +21,7 @@ import { encodeHeaderValue } from "./shared/headerEncoding";
 import { dashboardLanes, filterIssues, filterTasks, IssueFilters, TaskFilters } from "./shared/filters";
 import { scoreTone } from "./shared/scoreDisplay";
 import { detectPreferredLanguage, hasHanText, languageLabel, localizeDynamicText, type Language } from "./shared/i18n";
+import { localizedArrayItem, reviewText } from "./shared/localizedReviewText";
 import { validateImageFiles } from "./shared/uploads";
 
 type Role = "设计师" | "管理员";
@@ -1039,9 +1040,7 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
         </div>
         <div className="detail-tag-block">
           <span className="round-badge">{label(data.task.contentType)}</span>
-          <span>{t("Round {round} submission", { round: data.task.submissionRound })}</span>
-          <span>{data.task.description || t("No project notes")}</span>
-          <span>{t("Submitter: {name}", { name: data.task.submitterName })}{data.task.submitterId ? ` · ID ${data.task.submitterId}` : ""}</span>
+          <span className={`status ${data.task.status}`}>{label(data.task.status)}</span>
         </div>
       </section>
       {(loadError || error) && <div className="error">{loadError || error}</div>}
@@ -1203,8 +1202,8 @@ function ScorePanel({ result, status, issues = [] }: { result: any; status?: Rev
               <span>{label(rawLabel)}</span>
               <b>{value.score}/{value.max_score}</b>
               <p>{rubric?.definition ? t(rubric.definition) : ""}</p>
-              <p>{localizedText(language, value.comment_i18n ?? value.commentI18n ?? value.i18n?.comment, value.comment, dynamic)}</p>
-              {value.deduction_items?.length ? <ul>{value.deduction_items.map((item: unknown, index: number) => <li key={`${key}-${index}`}>{localizedText(language, localizedArrayItem(value.deduction_items_i18n ?? value.deductionItemsI18n, index), formatDeductionItem(item), dynamic)}</li>)}</ul> : <em>{t("No clear deduction items")}</em>}
+              <p>{reviewText(language, value.comment_i18n ?? value.commentI18n ?? value.i18n?.comment, value.comment)}</p>
+              {value.deduction_items?.length ? <ul>{value.deduction_items.map((item: unknown, index: number) => <li key={`${key}-${index}`}>{reviewText(language, localizedArrayItem(value.deduction_items_i18n ?? value.deductionItemsI18n, index), formatDeductionItem(item))}</li>)}</ul> : <em>{t("No clear deduction items")}</em>}
               {relatedIssues.length ? (
                 <div className="score-issue-list">
                   <strong>{t("Related revision items")}</strong>
@@ -1258,23 +1257,7 @@ function displayIssueTitle(issue: Issue, language: Language, dynamic: (value: un
 
 function localizedIssueText(issue: Issue, field: keyof NonNullable<Issue["i18n"]>, language: Language, dynamic: (value: unknown) => string) {
   const fallbackKey = field === "locationDescription" ? "locationDescription" : field === "relatedStandardSection" ? "relatedStandardSection" : field;
-  return localizedText(language, issue.i18n?.[field], issue[fallbackKey as keyof Issue], dynamic);
-}
-
-function localizedText(language: Language, value: unknown, fallback: unknown, dynamic: (value: unknown) => string) {
-  if (value && typeof value === "object") {
-    const localized = value as LocalizedText;
-    const exact = localized[language];
-    if (typeof exact === "string" && exact.trim()) return exact.trim();
-    const alternate = language === "en" ? localized.zh : localized.en;
-    if (typeof alternate === "string" && alternate.trim()) return dynamic(alternate);
-  }
-  if (typeof value === "string" && value.trim()) return dynamic(value);
-  return dynamic(fallback);
-}
-
-function localizedArrayItem(values: unknown, index: number) {
-  return Array.isArray(values) ? values[index] : undefined;
+  return reviewText(language, issue.i18n?.[field], issue[fallbackKey as keyof Issue]);
 }
 
 function AnnotationBox({ issue, index, active, onFocus }: { issue: Issue; index: number; active?: boolean; onFocus?: () => void }) {
