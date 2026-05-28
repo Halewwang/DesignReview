@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { assertCanDeleteTask, assertRole, assertTransition, canDeleteTaskStatus, canWithdrawTaskStatus, getAiDecisionStatus, getPreviousIssueRound, normalizeAiOnlyStatus } from "../server/services/workflow";
 import { normalizeAiReview, reviewRubric, toReviewIssue } from "../server/services/aiReview";
 import { dashboardLanes, filterIssues, filterTasks } from "../src/shared/filters";
+import { dashboardCommandCenter, reviewTimeline } from "../src/shared/reviewFlow";
 import { validateImageFiles } from "../src/shared/uploads";
 
 const baseTask = {
@@ -294,6 +295,60 @@ describe("front-end filters", () => {
     expect(lanes.find((lane) => lane.key === "reviewing")?.tasks.map((task) => task.id)).toEqual(["task_reviewing"]);
     expect(lanes.find((lane) => lane.key === "approved")?.tasks.map((task) => task.id)).toEqual(["task_approved"]);
     expect(lanes.find((lane) => lane.key === "closed")?.tasks.map((task) => task.id)).toEqual(["task_archived"]);
+  });
+
+  it("prioritizes the dashboard command center around next actions and live review state", () => {
+    const tasks = [
+      { ...baseTask, id: "task_frame", status: "frame_selection", submitterId: "EMKE-Hale", aiTotalScore: undefined },
+      { ...baseTask, id: "task_failed", status: "ai_review_failed", submitterId: "Other", submitterName: "Other", aiTotalScore: undefined },
+      { ...baseTask, id: "task_mine_revision", status: "needs_revision", submitterId: "EMKE-Hale", aiTotalScore: 76 },
+      { ...baseTask, id: "task_other_revision", status: "needs_revision", submitterId: "Other", submitterName: "Other", aiTotalScore: 68 },
+      { ...baseTask, id: "task_reviewing", status: "ai_reviewing", submitterId: "Other", submitterName: "Other", aiTotalScore: undefined },
+      { ...baseTask, id: "task_approved", status: "approved", submitterId: "Other", submitterName: "Other", aiTotalScore: 94 },
+      { ...baseTask, id: "task_archived", status: "archived", submitterId: "Other", submitterName: "Other", aiTotalScore: 88 }
+    ] as any[];
+
+    const commandCenter = dashboardCommandCenter(tasks, { currentUserId: "EMKE-Hale", currentUserName: "Hale" });
+
+    expect(commandCenter.primaryAction.map((task) => task.id)).toEqual(["task_frame", "task_failed", "task_mine_revision"]);
+    expect(commandCenter.liveReview.map((task) => task.id)).toEqual(["task_reviewing"]);
+    expect(commandCenter.revisionRisk.map((task) => task.id)).toEqual(["task_other_revision"]);
+    expect(commandCenter.reference.map((task) => task.id)).toEqual(["task_approved", "task_archived"]);
+    expect(commandCenter.metrics).toMatchObject({
+      total: 7,
+      primaryAction: 3,
+      liveReview: 1,
+      revisionRisk: 1,
+      approved: 1,
+      exceptions: 1,
+      averageScore: 82
+    });
+  });
+
+  it("builds a review timeline that highlights the active workflow state", () => {
+    expect(reviewTimeline("frame_selection").map((stage) => [stage.key, stage.state])).toEqual([
+      ["intake", "active"],
+      ["ai_review", "idle"],
+      ["ai_decision", "idle"],
+      ["revision", "idle"],
+      ["approved", "idle"]
+    ]);
+
+    expect(reviewTimeline("ai_reviewing").map((stage) => [stage.key, stage.state])).toEqual([
+      ["intake", "complete"],
+      ["ai_review", "active"],
+      ["ai_decision", "idle"],
+      ["revision", "idle"],
+      ["approved", "idle"]
+    ]);
+
+    expect(reviewTimeline("needs_revision").map((stage) => [stage.key, stage.state])).toEqual([
+      ["intake", "complete"],
+      ["ai_review", "complete"],
+      ["ai_decision", "complete"],
+      ["revision", "active"],
+      ["approved", "idle"]
+    ]);
   });
 
   it("validates upload batches with the same helper for create and resubmit flows", () => {

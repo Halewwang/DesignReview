@@ -18,7 +18,8 @@ import UploadCloud from "lucide-react/dist/esm/icons/upload-cloud.mjs";
 import "./styles.css";
 import { formatDeductionItem } from "./shared/aiDisplay";
 import { encodeHeaderValue } from "./shared/headerEncoding";
-import { dashboardLanes, filterIssues, filterTasks, IssueFilters, TaskFilters } from "./shared/filters";
+import { filterIssues, filterTasks, IssueFilters, TaskFilters } from "./shared/filters";
+import { dashboardCommandCenter, reviewTimeline, type ReviewTimelineStageState } from "./shared/reviewFlow";
 import { scoreTone } from "./shared/scoreDisplay";
 import { detectPreferredLanguage, hasHanText, languageLabel, localizeDynamicText, type Language } from "./shared/i18n";
 import { localizedArrayItem, reviewText } from "./shared/localizedReviewText";
@@ -138,6 +139,22 @@ const uiCopy: Record<Language, Record<string, string>> = {
     "Failed tasks": "异常任务",
     "Average AI score": "平均 AI 分",
     "Review Queue": "Review Queue",
+    "Command center": "审核指挥台",
+    "Decision required": "待决策",
+    "Live AI review": "AI 审核中",
+    "Revision risk": "返修风险",
+    "Primary workflow": "主流程",
+    "Next action": "下一步",
+    "Watching": "观察中",
+    "Reference": "参考",
+    "Priority work": "优先处理",
+    "Tasks that need Frame selection, retry, withdrawal, deletion, or resubmission.": "需要选择 Frame、重试、撤回、删除或重新提交的任务。",
+    "Pipeline": "流程状态",
+    "Reviews currently reading Figma, running AI, or comparing resubmissions.": "正在读取 Figma、运行 AI 或比对重新提交的审核。",
+    "Outcome watch": "结果观察",
+    "Returned work from other submitters and completed reference items.": "其他提交人的返修结果，以及已通过/归档的参考任务。",
+    "Browse all reviews": "浏览全部审核",
+    "Use filters for lookup; priority panels above stay focused on operational state.": "筛选用于查找；上方重点面板始终聚焦运营状态。",
     "Refresh": "刷新",
     "Loading tasks...": "读取任务中...",
     "AI passed": "AI 通过",
@@ -204,6 +221,20 @@ const uiCopy: Record<Language, Record<string, string>> = {
     "Retry AI review": "重新 AI 初审",
     "Withdraw": "撤回",
     "Delete": "删除",
+    "Decision summary": "审核结论",
+    "Workflow actions": "流程操作",
+    "No workflow action needed": "当前无需流程操作",
+    "Evidence and issues": "证据与问题",
+    "Supporting history": "辅助记录",
+    "Intake": "提交/选图",
+    "AI analysis": "AI 分析",
+    "AI decision": "AI 结论",
+    "Revision loop": "返修闭环",
+    "Approved archive": "通过归档",
+    "Current": "当前",
+    "Complete": "完成",
+    "Pending": "待定",
+    "Blocked": "阻断",
     "Zoom out": "缩小",
     "Zoom": "缩放比例",
     "Zoom in": "放大",
@@ -223,6 +254,7 @@ const uiCopy: Record<Language, Record<string, string>> = {
     "No AI result yet.": "尚无 AI 结果。",
     "AI pre-review total score": "AI 初审总分",
     "Pass rule: total score >= 85 and no veto issues.": "通过规则：总分 >= 85 且没有一票否决项。",
+    "Dimension evidence": "四维审核证据",
     "No clear deduction items": "无明确扣分项",
     "Related revision items": "关联修改项",
     "Veto risk {count} items": "一票否决风险 {count} 项",
@@ -407,7 +439,7 @@ class AppErrorBoundary extends React.Component<{ children: React.ReactNode; rese
               <h2>{i18n?.t("Page render failed")}</h2>
               <p className="meta">{i18n?.t("The current data contains fields that cannot be rendered directly, so the app prevented a blank screen.")}</p>
               <div className="error">{this.state.error}</div>
-              <button className="primary" onClick={this.props.onDashboard}>{i18n?.t("Back to dashboard")}</button>
+              <button className="primary" type="button" onClick={this.props.onDashboard}>{i18n?.t("Back to dashboard")}</button>
             </section>
           </main>
         )}
@@ -457,18 +489,18 @@ function Shell({ session, view, onView, children }: { session: Session; view: st
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <button className="sidebar-brand" onClick={() => onView("dashboard")}>
+        <button className="sidebar-brand" type="button" onClick={() => onView("dashboard")}>
           <span className="brand-mark"><Gauge size={17} /></span>
           <span><strong>EMKE Review</strong><small>AI Design Audit</small></span>
         </button>
         <nav className="sidebar-nav">
           <span>{t("Menu")}</span>
-          <button className={view === "dashboard" ? "active" : ""} onClick={() => onView("dashboard")}><Gauge size={15} /> {t("Dashboard")}</button>
-          <button className={view === "vis" ? "active" : ""} onClick={() => onView("vis")}><FileText size={15} /> {t("VIS source")}</button>
+          <button className={view === "dashboard" ? "active" : ""} type="button" onClick={() => onView("dashboard")}><Gauge size={15} /> {t("Dashboard")}</button>
+          <button className={view === "vis" ? "active" : ""} type="button" onClick={() => onView("vis")}><FileText size={15} /> {t("VIS source")}</button>
         </nav>
         <div className="sidebar-footer">
           <LanguageSwitcher />
-          <button className={`sidebar-link ${view === "settings" ? "active" : ""}`} onClick={() => onView("settings")}><Settings size={15} /> {t("Settings")}</button>
+          <button className={`sidebar-link ${view === "settings" ? "active" : ""}`} type="button" onClick={() => onView("settings")}><Settings size={15} /> {t("Settings")}</button>
           <div className="sidebar-user"><div className="avatar" title={`${label(session.role)} ${session.name}`}>{avatarText(session.name)}</div><span><strong>{session.name}</strong><small>{label(session.role)}</small></span></div>
         </div>
       </aside>
@@ -490,7 +522,7 @@ function LanguageSwitcher() {
 }
 
 function Dashboard({ session, onNew, onOpen }: { session: Session; onNew: () => void; onOpen: (id: string) => void }) {
-  const { t, label } = useI18n();
+  const { t } = useI18n();
   const { data: tasks, error, reload, loading } = useApi<Task[]>("/api/reviews", session, []);
   const [filters, setFilters] = useState<TaskFilters>({ contentType: "", status: "", submitterId: "", keyword: "", onlyMine: false });
   const hasActiveAiReview = tasks.some((task) => task.status === "ai_reviewing");
@@ -498,18 +530,11 @@ function Dashboard({ session, onNew, onOpen }: { session: Session; onNew: () => 
     () => filterTasks(tasks, { ...filters, currentUserId: session.userId, currentUserName: session.name }),
     [tasks, filters, session.userId, session.name]
   );
-  const groups = useMemo(() => ({
-    total: tasks.length,
-    revision: tasks.filter((task) => task.status === "needs_revision").length,
-    approved: tasks.filter((task) => task.status === "approved").length,
-    inProgress: tasks.filter((task) => ["draft", "figma_reading", "frame_selection", "ai_reviewing", "resubmitted"].includes(task.status)).length,
-    failed: tasks.filter((task) => ["figma_read_failed", "ai_review_failed"].includes(task.status)).length,
-    avgScore: Math.round(tasks.reduce((sum, task) => sum + (task.aiTotalScore ?? 0), 0) / Math.max(1, tasks.filter((task) => task.aiTotalScore).length))
-  }), [tasks]);
-  const lanes = dashboardLanes(filteredTasks, { currentUserId: session.userId, currentUserName: session.name }).map((lane) => ({
-    ...lane,
-    label: lane.key === "action_required" ? t("Action required") : lane.key === "reviewing" ? t("AI reviewing") : lane.key === "closed" ? t("Exceptions / archived") : label(lane.key)
-  }));
+  const commandCenter = useMemo(
+    () => dashboardCommandCenter(tasks, { currentUserId: session.userId, currentUserName: session.name }),
+    [tasks, session.userId, session.name]
+  );
+
   useEffect(() => {
     if (!hasActiveAiReview) return;
     const timer = window.setInterval(() => reload(), 10000);
@@ -528,54 +553,131 @@ function Dashboard({ session, onNew, onOpen }: { session: Session; onNew: () => 
           {t("New review task")}
         </button>
       </section>
-      <section className="metrics-board">
-        <Metric label={t("All tasks")} value={groups.total} accent="+ live" tone="live" />
-        <Metric label={t("AI suggests revision")} value={groups.revision} accent="- return" tone="revision" />
-        <Metric label={t("AI approved")} value={groups.approved} accent="+ pass" tone="success" />
-        <Metric label={t("Reviews in progress")} value={groups.inProgress} accent="+ queue" tone="queue" />
-        <Metric label={t("Failed tasks")} value={groups.failed} accent="!" tone="danger" />
-        <Metric label={t("Average AI score")} value={Number.isFinite(groups.avgScore) ? groups.avgScore : 0} accent="/100" tone="score" />
-      </section>
-      <section className="dashboard-grid">
-        <div className="queue-tools">
-          <h2>{t("Review Queue")}</h2>
+
+      <section className="command-dashboard">
+        <div className="command-topline">
+          <div>
+            <h2>{t("Command center")}</h2>
+            <p>{t("Track review queues, AI pre-review results, revision risks, and VIS sources.")}</p>
+          </div>
           <button className="hero-button subtle" type="button" onClick={reload}><RefreshCw size={15} />{t("Refresh")}</button>
         </div>
         {error && <div className="error">{error}</div>}
-        <TaskFilterBar filters={filters} onChange={setFilters} />
-        <div className="queue-board">
-          {loading && <div className="hero-panel"><div>{t("Loading tasks...")}</div></div>}
-          {lanes.slice(0, 2).map((lane) => (
-            <div className="queue-lane queue-lane-primary" key={lane.key}>
-              <div className="queue-lane-body">
-                <div className="lane-head"><h3>{lane.label}</h3><span className="chip-soft">{lane.tasks.length}</span></div>
-                {lane.tasks.map((task) => <TaskCard task={task} onOpen={onOpen} key={task.id} />)}
-                {lane.tasks.length === 0 && <div className="lane-empty">{t("Empty")}</div>}
-              </div>
-            </div>
-          ))}
-          <div className="queue-side-stack">
-            {lanes.slice(2).map((lane) => (
-              <div className="queue-lane queue-lane-compact" key={lane.key}>
-                <div className="queue-lane-body">
-                  <div className="lane-head"><h3>{lane.label}</h3><span className="chip-soft">{lane.tasks.length}</span></div>
-                  {lane.tasks.slice(0, 2).map((task) => <TaskCard task={task} onOpen={onOpen} key={task.id} compact />)}
-                  {lane.tasks.length === 0 && <div className="lane-empty">{t("Empty")}</div>}
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="queue-lane wide">
-            <div className="queue-lane-body">
-              <div className="lane-head"><h3>{t("Filtered results")}</h3><span className="chip-soft">{filteredTasks.length}</span></div>
-              {filteredTasks.slice(0, 8).map((task) => <TaskCard task={task} onOpen={onOpen} key={task.id} compact />)}
-              {!loading && filteredTasks.length === 0 && tasks.length > 0 && <div className="lane-empty">{t("No tasks match the current filters")}</div>}
-            </div>
-          </div>
-          {!loading && tasks.length === 0 && <div className="empty">{t("No review tasks yet. Create a task and start AI review first.")}</div>}
+
+        <div className="command-metrics">
+          <CommandMetric label={t("Decision required")} value={commandCenter.metrics.primaryAction} accent={t("Next action")} tone="action" />
+          <CommandMetric label={t("Live AI review")} value={commandCenter.metrics.liveReview} accent={t("Watching")} tone="live" />
+          <CommandMetric label={t("Revision risk")} value={commandCenter.metrics.revisionRisk} accent={t("Primary workflow")} tone="revision" />
+          <CommandMetric label={t("Average AI score")} value={commandCenter.metrics.averageScore} accent="/100" tone="score" />
         </div>
+
+        <div className="command-main-grid">
+          <TaskLanePanel
+            className="priority-panel"
+            title={t("Priority work")}
+            description={t("Tasks that need Frame selection, retry, withdrawal, deletion, or resubmission.")}
+            tasks={commandCenter.primaryAction}
+            emptyText={loading ? t("Loading tasks...") : t("Empty")}
+            onOpen={onOpen}
+          />
+
+          <section className="panel pipeline-panel">
+            <div className="panel-section-head">
+              <div>
+                <h3>{t("Pipeline")}</h3>
+                <p>{t("Reviews currently reading Figma, running AI, or comparing resubmissions.")}</p>
+              </div>
+              <span className="chip-soft">{commandCenter.liveReview.length}</span>
+            </div>
+            <div className="pipeline-review-stack">
+              {commandCenter.liveReview.map((task) => <TaskCard task={task} onOpen={onOpen} key={task.id} compact />)}
+              {commandCenter.liveReview.length === 0 && <div className="lane-empty">{loading ? t("Loading tasks...") : t("Empty")}</div>}
+            </div>
+          </section>
+
+          <div className="secondary-workflow-stack">
+            <TaskLanePanel
+              className="secondary-panel"
+              title={t("Outcome watch")}
+              description={t("Returned work from other submitters and completed reference items.")}
+              tasks={commandCenter.revisionRisk}
+              emptyText={loading ? t("Loading tasks...") : t("Empty")}
+              onOpen={onOpen}
+              compact
+            />
+            <TaskLanePanel
+              className="secondary-panel reference-panel"
+              title={t("Reference archive")}
+              description={t("Reference")}
+              tasks={commandCenter.reference.slice(0, 4)}
+              emptyText={loading ? t("Loading tasks...") : t("Empty")}
+              onOpen={onOpen}
+              compact
+            />
+          </div>
+        </div>
+
+        <section className="panel browse-panel">
+          <div className="panel-section-head browse-head">
+            <div>
+              <h3>{t("Browse all reviews")}</h3>
+              <p>{t("Use filters for lookup; priority panels above stay focused on operational state.")}</p>
+            </div>
+            <span className="chip-soft">{filteredTasks.length}</span>
+          </div>
+          <TaskFilterBar filters={filters} onChange={setFilters} />
+          <div className="task-ledger-list">
+            {filteredTasks.slice(0, 10).map((task) => <TaskCard task={task} onOpen={onOpen} key={task.id} compact />)}
+            {!loading && filteredTasks.length === 0 && tasks.length > 0 && <div className="lane-empty">{t("No tasks match the current filters")}</div>}
+            {!loading && tasks.length === 0 && <div className="empty">{t("No review tasks yet. Create a task and start AI review first.")}</div>}
+          </div>
+        </section>
       </section>
     </main>
+  );
+}
+
+function CommandMetric({ label, value, accent, tone }: { label: string; value: number; accent: string; tone: "action" | "live" | "revision" | "score" }) {
+  return (
+    <article className={`command-metric command-metric--${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <em>{accent}</em>
+    </article>
+  );
+}
+
+function TaskLanePanel({
+  className = "",
+  title,
+  description,
+  tasks,
+  emptyText,
+  onOpen,
+  compact = false
+}: {
+  className?: string;
+  title: string;
+  description?: string;
+  tasks: Task[];
+  emptyText: string;
+  onOpen: (id: string) => void;
+  compact?: boolean;
+}) {
+  return (
+    <section className={`panel task-lane-panel ${className}`}>
+      <div className="panel-section-head">
+        <div>
+          <h3>{title}</h3>
+          {description ? <p>{description}</p> : null}
+        </div>
+        <span className="chip-soft">{tasks.length}</span>
+      </div>
+      <div className="task-lane-list">
+        {tasks.map((task) => <TaskCard task={task} onOpen={onOpen} key={task.id} compact={compact} />)}
+        {tasks.length === 0 && <div className="lane-empty">{emptyText}</div>}
+      </div>
+    </section>
   );
 }
 
@@ -585,7 +687,7 @@ function TaskFilterBar({ filters, onChange }: { filters: TaskFilters; onChange: 
   const selectedStatus = filters.status || "all";
   return (
     <div className="filter-bar hero-filter-bar">
-      <div className="task-card-body">
+      <div className="filter-bar-grid">
         <input
           aria-label={t("Search tasks")}
           placeholder={t("Search task name / Figma file / submitter")}
@@ -724,7 +826,7 @@ function NewTask({ session, onBack, onFrames, onDetail }: { session: Session; on
           <div className="eyebrow">{t("NEW REVIEW")}</div>
           <h2>{t("New review task")}</h2>
         </div>
-        <button className="ghost" onClick={onBack}><ArrowLeft size={15} /> {t("Back")}</button>
+        <button className="ghost" type="button" onClick={onBack}><ArrowLeft size={15} /> {t("Back")}</button>
       </div>
       <form className="panel form-panel" onSubmit={submit}>
         <label>{t("Task name")}<input value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder={t("Example: Mother's Day website banner review")} required /></label>
@@ -784,7 +886,7 @@ function NewTask({ session, onBack, onFrames, onDetail }: { session: Session; on
           </div>
         </fieldset>
         {error && <div className="error">{error}</div>}
-        <button className="primary" disabled={busy || (sourceMode === "upload" && images.length === 0)}>{busy ? t("Processing...") : sourceMode === "upload" ? t("Create and AI review ({count})", { count: images.length }) : t("Read Figma")} <ChevronRight size={16} /></button>
+        <button className="primary" type="submit" disabled={busy || (sourceMode === "upload" && images.length === 0)}>{busy ? t("Processing...") : sourceMode === "upload" ? t("Create and AI review ({count})", { count: images.length }) : t("Read Figma")} <ChevronRight size={16} /></button>
       </form>
     </main>
   );
@@ -857,18 +959,18 @@ function FrameSelection({ session, taskId, onBack, onDetail }: { session: Sessio
       <div className="page-head frame-selection-head">
         <div><h2>{t("Choose Frames to review")}</h2><p>{t("Only manually selected top-level Frames are exported. Up to {max} per review. Selected {selected}/{max}.", { max: maxFrames, selected: selected.size })}</p></div>
         <div className="frame-head-actions">
-          <button className="ghost" onClick={onBack}><ArrowLeft size={15} /> {t("Back")}</button>
-          <button className="primary" disabled={busy || selected.size === 0 || selected.size > maxFrames} onClick={startAiReview}>{busy ? t("Processing...") : t("Start AI review ({count})", { count: selected.size })} <Sparkles size={16} /></button>
+          <button className="ghost" type="button" onClick={onBack}><ArrowLeft size={15} /> {t("Back")}</button>
+          <button className="primary" type="button" disabled={busy || selected.size === 0 || selected.size > maxFrames} onClick={startAiReview}>{busy ? t("Processing...") : t("Start AI review ({count})", { count: selected.size })} <Sparkles size={16} /></button>
         </div>
       </div>
       {selected.size > maxFrames && <div className="error">{t("The current selection exceeds the limit. Reduce it to {max} Frames or fewer.", { max: maxFrames })}</div>}
       {(error || actionError) && <div className="error">{error || actionError}</div>}
       {pages.map((page) => (
         <section key={page} className="frame-section">
-          <div className="section-bar"><h3>{page}</h3><button className="ghost" onClick={() => togglePage(page)}>{frames.filter((frame) => frame.pageName === page).every((frame) => selected.has(frame.id)) ? t("Deselect current Page") : t("Select current Page")}</button></div>
+          <div className="section-bar"><h3>{page}</h3><button className="ghost" type="button" onClick={() => togglePage(page)}>{frames.filter((frame) => frame.pageName === page).every((frame) => selected.has(frame.id)) ? t("Deselect current Page") : t("Select current Page")}</button></div>
           <div className="frame-grid">
             {frames.filter((frame) => frame.pageName === page).map((frame) => (
-              <button className={`frame-card ${selected.has(frame.id) ? "selected" : ""}`} key={frame.id} onClick={() => toggle(frame.id)}>
+              <button className={`frame-card ${selected.has(frame.id) ? "selected" : ""}`} type="button" key={frame.id} onClick={() => toggle(frame.id)}>
                 <div className="thumb">{frame.thumbnailUrl ? <img src={frame.thumbnailUrl} alt={frame.frameName} /> : <><ImageIcon /><span>{t("No thumbnail")}</span></>}</div>
                 <div className="frame-name">{frame.frameName}</div>
                 <div className="meta">{frame.width} x {frame.height} · {frame.figmaNodeId}</div>
@@ -877,7 +979,7 @@ function FrameSelection({ session, taskId, onBack, onDetail }: { session: Sessio
           </div>
         </section>
       ))}
-      {frames.length === 0 && <div className="empty frame-empty">{data?.task?.status === "figma_read_failed" ? <button className="primary" onClick={readFigmaAgain} disabled={busy || retryAfter > 0}>{retryAfter > 0 ? t("Retry in {seconds}s", { seconds: retryAfter }) : t("Reload Figma")}</button> : <button className="primary" onClick={reload}>{t("Reload task")}</button>}</div>}
+      {frames.length === 0 && <div className="empty frame-empty">{data?.task?.status === "figma_read_failed" ? <button className="primary" type="button" onClick={readFigmaAgain} disabled={busy || retryAfter > 0}>{retryAfter > 0 ? t("Retry in {seconds}s", { seconds: retryAfter }) : t("Reload Figma")}</button> : <button className="primary" type="button" onClick={reload}>{t("Reload task")}</button>}</div>}
     </main>
   );
 }
@@ -1017,6 +1119,32 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
   const currentUserKeys = [session.userId, session.name].map((value) => String(value ?? "").trim().toLowerCase()).filter(Boolean);
   const ownsTask = [data.task.submitterId, data.task.submitterName].map((value) => String(value ?? "").trim().toLowerCase()).some((value) => currentUserKeys.includes(value));
   const canDelete = (session.role === "管理员" || ownsTask) && ["draft", "figma_reading", "frame_selection", "ai_reviewing", "needs_revision", "resubmitted", "approved", "archived", "figma_read_failed", "ai_review_failed"].includes(data.task.status);
+  const workflowActions = (
+    <section className="panel decision-actions-panel">
+      <div className="panel-section-head">
+        <div>
+          <h3>{t("Workflow actions")}</h3>
+          <p>{label(data.task.status)}</p>
+        </div>
+      </div>
+      <div className="decision-actions">
+        {data.task.status === "needs_revision" && data.task.source === "upload" ? (
+          <>
+            <button className="primary" type="button" onClick={() => uploadResubmitInputRef.current?.click()} disabled={resubmitBusy}><UploadCloud size={15} /> {resubmitBusy ? t("Submitting...") : t("Upload images and resubmit")}</button>
+            <input ref={uploadResubmitInputRef} className="hidden-file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => resubmitUploadedImages(event.target.files)} />
+          </>
+        ) : data.task.status === "needs_revision" && <button className="primary" type="button" onClick={resubmit}><RefreshCw size={15} /> {t("Resubmit")}</button>}
+        {data.task.status === "figma_read_failed" && <button className="primary" type="button" onClick={retryReadFigma}><RefreshCw size={15} /> {t("Reload Figma")}</button>}
+        {data.task.status === "ai_review_failed" && <button className="primary" type="button" onClick={retryAiReview}><Sparkles size={15} /> {t("Retry AI review")}</button>}
+        <div className="decision-secondary-actions" aria-label={t("Workflow actions")}>
+          {canWithdraw && <button className="action-button" type="button" onClick={withdrawTask}><Undo2 size={15} /> {t("Withdraw")}</button>}
+          {canDelete && <button className="danger compact" type="button" onClick={deleteTask}><Trash2 size={15} /> {t("Delete")}</button>}
+          <button className="action-button icon-only" type="button" onClick={reload} aria-label={t("Refresh")} title={t("Refresh")}><RefreshCw size={15} /></button>
+        </div>
+        {!canWithdraw && !canDelete && data.task.status !== "needs_revision" && data.task.status !== "figma_read_failed" && data.task.status !== "ai_review_failed" && <span className="meta">{t("No workflow action needed")}</span>}
+      </div>
+    </section>
+  );
 
   return (
     <main className="workspace detail">
@@ -1043,31 +1171,25 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
           <span className={`status ${data.task.status}`}>{label(data.task.status)}</span>
         </div>
       </section>
+      <ReviewFlowRail status={data.task.status} />
       {(loadError || error) && <div className="error">{loadError || error}</div>}
       {aiReviewing && <AiReviewProgressPanel minutes={reviewAgeMinutes} onRefresh={reload} />}
       <section className="review-layout">
         <div className="preview-panel">
           <div className="preview-toolbar">
-            <div className="frame-tabs">{frames.map((frame) => <button className={activeFrame?.id === frame.id ? "active" : ""} onClick={() => setActiveFrameId(frame.id)} key={frame.id}>{frame.frameName}</button>)}</div>
+            <div className="frame-tabs">{frames.map((frame) => (
+              <button className={activeFrame?.id === frame.id ? "active" : ""} type="button" onClick={() => setActiveFrameId(frame.id)} title={frame.frameName} key={frame.id}>
+                {compactFrameLabel(frame.frameName)}
+              </button>
+            ))}</div>
             <div className="preview-action-row head-actions">
-              {editingMeta ? <button className="action-button primary-action" onClick={saveMeta}>{t("Save")}</button> : <button className="action-button icon-only" onClick={() => setEditingMeta(true)} aria-label={t("Edit name / ID")} title={t("Edit name / ID")}><Settings size={15} /></button>}
-              {data.task.status === "needs_revision" && data.task.source === "upload" ? (
-                <>
-                  <button className="primary" onClick={() => uploadResubmitInputRef.current?.click()} disabled={resubmitBusy}><UploadCloud size={15} /> {resubmitBusy ? t("Submitting...") : t("Upload images and resubmit")}</button>
-                  <input ref={uploadResubmitInputRef} className="hidden-file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => resubmitUploadedImages(event.target.files)} />
-                </>
-              ) : data.task.status === "needs_revision" && <button className="primary" onClick={resubmit}><RefreshCw size={15} /> {t("Resubmit")}</button>}
-              {data.task.status === "figma_read_failed" && <button className="primary" onClick={retryReadFigma}><RefreshCw size={15} /> {t("Reload Figma")}</button>}
-              {data.task.status === "ai_review_failed" && <button className="primary" onClick={retryAiReview}><Sparkles size={15} /> {t("Retry AI review")}</button>}
-              {canWithdraw && <button className="action-button icon-only" onClick={withdrawTask} aria-label={t("Withdraw")} title={t("Withdraw")}><Undo2 size={15} /></button>}
-              {canDelete && <button className="danger compact icon-only" onClick={deleteTask} aria-label={t("Delete")} title={t("Delete")}><Trash2 size={15} /></button>}
-              <button className="action-button icon-only" onClick={reload} aria-label={t("Refresh")} title={t("Refresh")}><RefreshCw size={15} /></button>
+              {editingMeta ? <button className="action-button primary-action" type="button" onClick={saveMeta}>{t("Save")}</button> : <button className="action-button icon-only" type="button" onClick={() => setEditingMeta(true)} aria-label={t("Edit name / ID")} title={t("Edit name / ID")}><Settings size={15} /></button>}
             </div>
             <div className="zoom-controls">
-              <button onClick={() => setZoom(Math.max(50, zoom - 10))} title={t("Zoom out")}><Minus size={15} /></button>
+              <button type="button" onClick={() => setZoom(Math.max(50, zoom - 10))} title={t("Zoom out")}><Minus size={15} /></button>
               <input aria-label={t("Zoom")} type="range" min="50" max="220" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} />
-              <button onClick={() => setZoom(Math.min(220, zoom + 10))} title={t("Zoom in")}><Plus size={15} /></button>
-              <button className="zoom-reset" onClick={() => setZoom(100)} title={t("Reset to 100%")}><Maximize2 size={15} /><span>{zoom}%</span></button>
+              <button type="button" onClick={() => setZoom(Math.min(220, zoom + 10))} title={t("Zoom in")}><Plus size={15} /></button>
+              <button className="zoom-reset" type="button" onClick={() => setZoom(100)} title={t("Reset to 100%")}><Maximize2 size={15} /><span>{zoom}%</span></button>
             </div>
           </div>
           <div className="image-stage">
@@ -1085,8 +1207,9 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
         </div>
         <aside className="review-sidebar">
           <ScorePanel result={result} status={data.task.status} issues={issues} />
+          {workflowActions}
           <section className="panel review-list-panel">
-            <div className="panel-head"><h3>{t("Issue list")}</h3><span>{filteredIssues.length}/{issues.length}</span></div>
+            <div className="panel-head"><h3>{t("Evidence and issues")}</h3><span>{filteredIssues.length}/{issues.length}</span></div>
             <IssueFilterBar filters={issueFilters} onChange={setIssueFilters} frames={frames} rounds={rounds} selectedRound={selectedRound} onRoundChange={setSelectedRound} />
             <div className="review-list-scroll">
               {filteredIssues.map((issue, index) => <IssueCard issue={issue} index={index + 1} annotationIndex={annotationIndexByIssueId.get(issue.id)} active={issue.id === activeIssueId} onFocus={() => setActiveIssueId(issue.id)} key={issue.id} />)}
@@ -1096,13 +1219,42 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
           </section>
         </aside>
         <section className="panel log-panel review-log-panel">
-          <div className="panel-head"><h3>{t("Submission history")}</h3><span>{data.logs.length}</span></div>
+          <div className="panel-head"><h3>{t("Supporting history")}</h3><span>{data.logs.length}</span></div>
           <div className="log-grid">
             {data.logs.map((log) => <div className="log" key={log.id}>{dynamic(log.action)}<span>{new Date(log.createdAt).toLocaleString()}</span></div>)}
           </div>
         </section>
       </section>
     </main>
+  );
+}
+
+function ReviewFlowRail({ status }: { status: ReviewStatus }) {
+  const { t } = useI18n();
+  const stageLabels: Record<string, string> = {
+    intake: "Intake",
+    ai_review: "AI analysis",
+    ai_decision: "AI decision",
+    revision: "Revision loop",
+    approved: "Approved archive"
+  };
+  const stateLabels: Record<ReviewTimelineStageState, string> = {
+    complete: "Complete",
+    active: "Current",
+    idle: "Pending",
+    blocked: "Blocked"
+  };
+
+  return (
+    <nav className="review-flow-rail" aria-label={t("Primary workflow")}>
+      {reviewTimeline(status).map((stage, index) => (
+        <div className={`review-flow-step ${stage.state}`} key={stage.key}>
+          <span>{index + 1}</span>
+          <strong>{t(stageLabels[stage.key])}</strong>
+          <em>{t(stateLabels[stage.state])}</em>
+        </div>
+      ))}
+    </nav>
   );
 }
 
@@ -1123,7 +1275,7 @@ function AiReviewProgressPanel({ minutes, onRefresh }: { minutes: number; onRefr
       </div>
       <div className="ai-progress-actions">
         <span>{t("Started {minutes} min ago", { minutes })}</span>
-        <button className="action-button" onClick={onRefresh}><RefreshCw size={15} />{t("Refresh status")}</button>
+        <button className="action-button" type="button" onClick={onRefresh}><RefreshCw size={15} />{t("Refresh status")}</button>
       </div>
     </section>
   );
@@ -1170,8 +1322,8 @@ function IssueFilterBar({
         <option value="建议">{label("建议")}</option>
       </select>
       <div className="segmented">
-        <button className={!filters.mustFixOnly ? "active" : ""} onClick={() => onChange({ ...filters, mustFixOnly: false })}>{t("All issues")}</button>
-        <button className={filters.mustFixOnly ? "active" : ""} onClick={() => onChange({ ...filters, mustFixOnly: true })}>{t("Must fix")}</button>
+        <button className={!filters.mustFixOnly ? "active" : ""} type="button" onClick={() => onChange({ ...filters, mustFixOnly: false })}>{t("All issues")}</button>
+        <button className={filters.mustFixOnly ? "active" : ""} type="button" onClick={() => onChange({ ...filters, mustFixOnly: true })}>{t("Must fix")}</button>
       </div>
     </section>
   );
@@ -1182,45 +1334,53 @@ function ScorePanel({ result, status, issues = [] }: { result: any; status?: Rev
   if (!result) return <section className="panel"><h3>{t("AI pre-review")}</h3><p className="meta">{t("No AI result yet.")}</p></section>;
   const scores = result.dimensionScores;
   const vetoIssues = result.rawAiResponse?.veto_issues ?? [];
+  const mustFixCount = issues.filter((issue) => issue.mustFix).length;
   return (
     <section className="score-panel">
       <div className="score-hero">
         <div className="score-title">
-          <span>{t("AI pre-review total score")}</span>
+          <span>{t("Decision summary")}</span>
+          <em>{t("Pass rule: total score >= 85 and no veto issues.")}</em>
         </div>
         {status ? <span className={`status ${status}`}>{label(status)}</span> : null}
         <strong className={`score-value score-value--${scoreTone(result.totalScore)}`}>{result.totalScore}</strong>
       </div>
-      <p className="rubric-note">{t("Pass rule: total score >= 85 and no veto issues.")}</p>
-      <div className="dimension-grid">
-        {Object.entries(scores).map(([key, value]: any) => {
-          const rubric = aiRubric.find((item) => item.key === key);
-          const rawLabel = rubric?.label ?? scoreName(key);
-          const relatedIssues = issues.filter((issue) => issue.type === rawLabel);
-          return (
-            <div className="score-line" key={key}>
-              <span>{label(rawLabel)}</span>
-              <b>{value.score}/{value.max_score}</b>
-              <p>{rubric?.definition ? t(rubric.definition) : ""}</p>
-              <p>{reviewText(language, value.comment_i18n ?? value.commentI18n ?? value.i18n?.comment, value.comment)}</p>
-              {value.deduction_items?.length ? <ul>{value.deduction_items.map((item: unknown, index: number) => <li key={`${key}-${index}`}>{reviewText(language, localizedArrayItem(value.deduction_items_i18n ?? value.deductionItemsI18n, index), formatDeductionItem(item))}</li>)}</ul> : <em>{t("No clear deduction items")}</em>}
-              {relatedIssues.length ? (
-                <div className="score-issue-list">
-                  <strong>{t("Related revision items")}</strong>
-                  {relatedIssues.map((issue) => (
-                    <article key={issue.id}>
-                      <span>{displayIssueTitle(issue, language, dynamic)}</span>
-                      <p>{localizedIssueText(issue, "description", language, dynamic)}</p>
-                      <em>{localizedIssueText(issue, "suggestion", language, dynamic)}</em>
-                    </article>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          );
-        })}
+      <div className="score-signal-grid">
+        <span><b>{issues.length}</b>{t("All issues")}</span>
+        <span><b>{mustFixCount}</b>{t("Must fix")}</span>
       </div>
       <div className={`veto-strip ${vetoIssues.length ? "risk" : ""}`}>{vetoIssues.length ? t("Veto risk {count} items", { count: vetoIssues.length }) : t("No veto risk found")}</div>
+      <details className="dimension-details">
+        <summary>{t("Dimension evidence")}</summary>
+        <div className="dimension-grid">
+          {Object.entries(scores).map(([key, value]: any) => {
+            const rubric = aiRubric.find((item) => item.key === key);
+            const rawLabel = rubric?.label ?? scoreName(key);
+            const relatedIssues = issues.filter((issue) => issue.type === rawLabel);
+            return (
+              <div className="score-line" key={key}>
+                <span>{label(rawLabel)}</span>
+                <b>{value.score}/{value.max_score}</b>
+                <p>{rubric?.definition ? t(rubric.definition) : ""}</p>
+                <p>{reviewText(language, value.comment_i18n ?? value.commentI18n ?? value.i18n?.comment, value.comment)}</p>
+                {value.deduction_items?.length ? <ul>{value.deduction_items.map((item: unknown, index: number) => <li key={`${key}-${index}`}>{reviewText(language, localizedArrayItem(value.deduction_items_i18n ?? value.deductionItemsI18n, index), formatDeductionItem(item))}</li>)}</ul> : <em>{t("No clear deduction items")}</em>}
+                {relatedIssues.length ? (
+                  <div className="score-issue-list">
+                    <strong>{t("Related revision items")}</strong>
+                    {relatedIssues.map((issue) => (
+                      <article key={issue.id}>
+                        <span>{displayIssueTitle(issue, language, dynamic)}</span>
+                        <p>{localizedIssueText(issue, "description", language, dynamic)}</p>
+                        <em>{localizedIssueText(issue, "suggestion", language, dynamic)}</em>
+                      </article>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </details>
     </section>
   );
 }
@@ -1271,7 +1431,7 @@ function AnnotationBox({ issue, index, active, onFocus }: { issue: Issue; index:
   return (
     <>
       {region}
-      <button title={issue.title} className={`annotation-pin ${issue.severity} ${active ? "active" : ""}`} onMouseEnter={onFocus} onFocus={onFocus} style={{ left: `${pinX}%`, top: `${pinY}%` }}>{index}</button>
+      <button title={issue.title} className={`annotation-pin ${issue.severity} ${active ? "active" : ""}`} type="button" onMouseEnter={onFocus} onFocus={onFocus} style={{ left: `${pinX}%`, top: `${pinY}%` }}>{index}</button>
     </>
   );
 }
@@ -1320,7 +1480,7 @@ function VisPage({ session }: { session: Session }) {
           <div className="source-meta"><span>{data?.path ?? t("Path not loaded")}</span><span>{data?.sections?.length ?? 0} sections</span></div>
           <div className="vis-actions">
             <label className="file-picker">{t("Upload standard source")}<input type="file" accept=".md,.markdown,.txt,text/markdown,text/plain" onChange={(event) => pickFile(event.target.files?.[0])} /></label>
-            <button className="primary" disabled={busy || !draft.trim()} onClick={upload}>{busy ? t("Analyzing...") : t("Analyze standard source")} <UploadCloud size={15} /></button>
+            <button className="primary" type="button" disabled={busy || !draft.trim()} onClick={upload}>{busy ? t("Analyzing...") : t("Analyze standard source")} <UploadCloud size={15} /></button>
           </div>
         </div>
         <div className="upload-box">
@@ -1406,7 +1566,7 @@ function SettingsPage({ session }: { session: Session }) {
         <label>Base URL<input value={form.baseURL} onChange={(event) => setForm({ ...form, baseURL: event.target.value })} /></label>
         <label>{t("Model")}<input value={form.model} onChange={(event) => setForm({ ...form, model: event.target.value })} /></label>
         <label>API Key<input type="password" value={form.apiKey} onChange={(event) => setForm({ ...form, apiKey: event.target.value })} placeholder={t("Enter a new Key to save; the full Key will not be shown in the frontend")} /></label>
-        <button className="primary" disabled={busy}>{busy ? t("Saving...") : t("Save AI config")}</button>
+        <button className="primary" type="submit" disabled={busy}>{busy ? t("Saving...") : t("Save AI config")}</button>
       </form>
       </div>
     </main>
@@ -1430,6 +1590,15 @@ function Setting({ label, value }: { label: string; value: any }) {
 
 function scoreName(key: string) {
   return ({ brand_consistency: "品牌一致性", layout_standard: "排版规范", ecommerce_expression: "电商表达", delivery_standard: "交付规范" } as Record<string, string>)[key] ?? key;
+}
+
+function compactFrameLabel(name: string) {
+  const trimmed = name.trim();
+  if (trimmed.length <= 18) return trimmed || "--";
+  const extension = trimmed.match(/\.[a-z0-9]{2,5}$/i)?.[0] ?? "";
+  const base = extension ? trimmed.slice(0, -extension.length) : trimmed;
+  if (base.length <= 18) return trimmed;
+  return extension ? `${base.slice(0, 8)}...${base.slice(-4)}${extension}` : `${trimmed.slice(0, 10)}...${trimmed.slice(-5)}`;
 }
 
 function avatarText(name: string) {
