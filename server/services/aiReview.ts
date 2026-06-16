@@ -13,15 +13,15 @@ export const reviewRubric = {
     {
       key: "brand_consistency",
       label: "品牌一致性",
-      maxScore: 30,
-      definition: "是否符合 EMKE warm-minimal、理性、清晰、可信赖的品牌气质，并正确使用品牌资产。",
+      maxScore: 25,
+      definition: "是否符合 EMKE VIS 中的 warm-minimal、理性、清晰、可信赖品牌气质，并正确使用品牌资产。",
       deductionGuide: ["Logo、色彩、字体、图片气质与 VIS 不一致", "过度奢华、廉价促销感或装饰噪音削弱品牌识别"]
     },
     {
       key: "layout_standard",
       label: "排版规范",
-      maxScore: 30,
-      definition: "是否有稳定栅格、清晰层级、合理留白和可读的视觉动线。",
+      maxScore: 25,
+      definition: "是否在 VIS 规范下保持稳定栅格、清晰层级、合理留白和可读的视觉动线。",
       deductionGuide: ["标题、卖点、规格、CTA 层级不清", "对齐、间距、模块节奏或移动端压缩可读性不足"]
     },
     {
@@ -37,6 +37,13 @@ export const reviewRubric = {
       maxScore: 15,
       definition: "是否满足渠道尺寸、素材完整性、文案准确性和基础交付质量。",
       deductionGuide: ["尺寸/安全区/导出质量不满足渠道要求", "错别字、错误参数、素材缺失或产品图失真"]
+    },
+    {
+      key: "design_system_discipline",
+      label: "设计系统纪律",
+      maxScore: 10,
+      definition: "是否以 EMKE VIS 为最高依据，保持网格、字体层级、留白、组件/模块和跨 Frame 视觉系统的一致性；外部设计方法只能作为秩序感参考，不能覆盖 VIS。",
+      deductionGuide: ["网格、基线、留白或模块关系松散，导致系统感不足", "字体、色彩、组件或跨 Frame 复用方式脱离 VIS，视觉语言不连续"]
     }
   ] as const,
   severityDeductionGuide: {
@@ -185,7 +192,7 @@ function normalizeDimensionScores(input: any) {
   );
 }
 
-const issueTypes = new Set(["品牌一致性", "排版规范", "电商表达", "交付规范"]);
+const issueTypes = new Set(["品牌一致性", "排版规范", "电商表达", "交付规范", "设计系统纪律"]);
 const issueSeverities = new Set(["严重", "中等", "轻微", "建议"]);
 const resolutionStatuses = new Set(["待解决", "疑似已解决", "仍未解决", "新增问题", "无法判断"]);
 
@@ -213,7 +220,7 @@ function validateAiReviewShape(input: any) {
     }
   }
   if (typeof totalScore === "number" && totalScore !== dimensionSum) {
-    errors.push(`total_score 必须等于四维得分之和 ${dimensionSum}`);
+    errors.push(`total_score 必须等于五维得分之和 ${dimensionSum}`);
   }
 
   if (Array.isArray(input.issues)) {
@@ -409,13 +416,14 @@ function buildPrompt(
     "以下 VIS 标准源是本次审核的唯一规则依据。必须理解并应用这些章节，不能只概括文件名。",
     sections.map((section) => `## ${section.title}\n${section.content}`).join("\n\n"),
     "评分规则：",
+    "所有评审维度必须以本次 VIS 标准源为最高依据。设计系统纪律只评价网格、字体、留白、模块和跨 Frame 一致性是否服务于 EMKE VIS，不得用外部设计风格替代 VIS。",
     reviewRubric.dimensions.map((dimension) => `- ${dimension.key} / ${dimension.label}：${dimension.maxScore} 分。${dimension.definition} 典型扣分：${dimension.deductionGuide.join("；")}`).join("\n"),
     `通过规则：${reviewRubric.vetoPolicy}`,
     `一票否决：${reviewRubric.vetoIssues.join("、")}。命中时必须加入 veto_issues，即使总分高于 ${reviewRubric.passScore}。`,
     `严重度扣分参考：${JSON.stringify(reviewRubric.severityDeductionGuide)}`,
     `上一轮问题清单：${JSON.stringify(previousIssues)}`,
     "请使用视觉模型能力直接观察图片区域，对每个明确问题给出可标注位置。坐标必须以对应图片自身左上角为 (0,0)、右下角为 (100,100)，不能按页面留白、浏览器画布或截图外框计算。",
-    "total_score 必须等于四个 dimension_scores.*.score 的加总；不要单独估算总分。",
+    "total_score 必须等于五个 dimension_scores.*.score 的加总；不要单独估算总分。",
     "dimension_scores 中每个维度必须包含 deduction_items 数组，逐条列出扣分原因；每条扣分必须写清：具体画面/模块/文字或产品元素、违反的标准点、对业务表达的影响。不要只写“层级不足”“品牌感弱”这类泛化结论；没有扣分则返回空数组。",
     "所有 AI 生成的自然语言审核结果必须同时返回中文和英文两个版本。dimension_scores.* 必须包含 comment_i18n:{zh,en} 与 deduction_items_i18n:[{zh,en}]；issues.* 必须包含 title_i18n、location_description_i18n、description_i18n、suggestion_i18n、related_standard_section_i18n。原有中文字段仍保留用于旧流程兼容，英文必须是完整自然英文，不能中英混写。前端会按当前语言直接读取对应版本。",
     `standard_source 必须返回 file_name=${sourceName}, brand=EMKE, version=${sourceVersion}。`,
@@ -477,16 +485,18 @@ function mockReview(
 
   const dimension_scores = previousIssues.length
     ? {
-        brand_consistency: dimensionScore(25, 30, "品牌气质比上一轮更稳定，但仍需减少泛化视觉语言。", "The brand tone is more stable than the previous round, but generic visual language still needs to be reduced.", [["产品质感与 EMKE 克制理性气质的关联还可加强", "The connection between product texture and EMKE's restrained, rational tone can still be strengthened."]]),
-        layout_standard: dimensionScore(25, 30, "层级和阅读路径已有改善，局部模块节奏仍可收紧。", "Hierarchy and reading flow have improved, while the rhythm of some modules can still be tightened.", [["局部留白节奏与画面主体未形成足够明确的阅读路径", "The local spacing rhythm and main visual subject do not yet form a sufficiently clear reading path."]]),
+        brand_consistency: dimensionScore(22, 25, "品牌气质比上一轮更稳定，但仍需减少泛化视觉语言。", "The brand tone is more stable than the previous round, but generic visual language still needs to be reduced.", [["产品质感与 EMKE 克制理性气质的关联还可加强", "The connection between product texture and EMKE's restrained, rational tone can still be strengthened."]]),
+        layout_standard: dimensionScore(22, 25, "层级和阅读路径已有改善，局部模块节奏仍可收紧。", "Hierarchy and reading flow have improved, while the rhythm of some modules can still be tightened.", [["局部留白节奏与画面主体未形成足够明确的阅读路径", "The local spacing rhythm and main visual subject do not yet form a sufficiently clear reading path."]]),
         ecommerce_expression: dimensionScore(20, 25, "卖点表达更直接，但 proof/specification 仍不足。", "The selling point is more direct, but proof or specification support is still insufficient.", [["核心卖点缺少 proof/specification 支撑", "The core selling point lacks proof or specification support."]]),
-        delivery_standard: dimensionScore(12, 15, "未发现严重交付错误，需继续确认渠道尺寸适配。", "No critical delivery issue was found, but channel size adaptation still needs confirmation.", [["需确认最终渠道尺寸与移动端压缩可读性", "Final channel dimensions and mobile compressed readability still need to be confirmed."]])
+        delivery_standard: dimensionScore(12, 15, "未发现严重交付错误，需继续确认渠道尺寸适配。", "No critical delivery issue was found, but channel size adaptation still needs confirmation.", [["需确认最终渠道尺寸与移动端压缩可读性", "Final channel dimensions and mobile compressed readability still need to be confirmed."]]),
+        design_system_discipline: dimensionScore(6, 10, "VIS 模块纪律已有改善，但跨 Frame 的网格、留白和标题层级仍需统一。", "VIS module discipline has improved, but grid, spacing, and headline hierarchy still need to be unified across frames.", [["相同模块的网格、留白或字体层级在不同 Frame 中还不够连续", "Grid, spacing, or type hierarchy for the same module is still not continuous enough across frames."]])
       }
     : {
-        brand_consistency: dimensionScore(23, 30, "整体接近 warm-minimal 与 rational clarity，但仍需控制视觉噪音。", "The overall direction is close to warm minimalism and rational clarity, but visual noise still needs to be controlled.", [["局部氛围偏泛化，品牌识别点不够集中", "Some areas feel generic, and the brand recognition cues are not focused enough."], ["产品质感与 EMKE 克制理性气质的关联还可加强", "The connection between product texture and EMKE's restrained, rational tone can still be strengthened."]]),
-        layout_standard: dimensionScore(22, 30, "有基础栅格感，局部模块节奏和阅读路径需要收紧。", "There is a basic sense of grid structure, but local module rhythm and reading flow need tightening.", [["标题、促销数字和说明文字之间层级关系不够稳定", "The hierarchy between the headline, promotional numbers, and supporting copy is not stable enough."], ["局部留白节奏与画面主体未形成明确阅读路径", "The local spacing rhythm and main visual subject do not form a clear reading path."]]),
+        brand_consistency: dimensionScore(20, 25, "整体接近 warm-minimal 与 rational clarity，但仍需控制视觉噪音。", "The overall direction is close to warm minimalism and rational clarity, but visual noise still needs to be controlled.", [["局部氛围偏泛化，品牌识别点不够集中", "Some areas feel generic, and the brand recognition cues are not focused enough."], ["产品质感与 EMKE 克制理性气质的关联还可加强", "The connection between product texture and EMKE's restrained, rational tone can still be strengthened."]]),
+        layout_standard: dimensionScore(20, 25, "有基础栅格感，局部模块节奏和阅读路径需要收紧。", "There is a basic sense of grid structure, but local module rhythm and reading flow need tightening.", [["标题、促销数字和说明文字之间层级关系不够稳定", "The hierarchy between the headline, promotional numbers, and supporting copy is not stable enough."], ["局部留白节奏与画面主体未形成明确阅读路径", "The local spacing rhythm and main visual subject do not form a clear reading path."]]),
         ecommerce_expression: dimensionScore(19, 25, "产品优先级明确，但卖点证明和规格支撑不足。", "Product priority is clear, but selling point proof and specification support are insufficient.", [["核心卖点缺少 proof/specification 支撑", "The core selling point lacks proof or specification support."], ["CTA 或行动路径不够明确", "The CTA or action path is not clear enough."]]),
-        delivery_standard: dimensionScore(12, 15, "未发现严重交付错误，需继续确认渠道尺寸适配。", "No critical delivery issue was found, but channel size adaptation still needs confirmation.", [["需确认最终渠道尺寸与移动端压缩可读性", "Final channel dimensions and mobile compressed readability still need to be confirmed."]])
+        delivery_standard: dimensionScore(12, 15, "未发现严重交付错误，需继续确认渠道尺寸适配。", "No critical delivery issue was found, but channel size adaptation still needs confirmation.", [["需确认最终渠道尺寸与移动端压缩可读性", "Final channel dimensions and mobile compressed readability still need to be confirmed."]]),
+        design_system_discipline: dimensionScore(5, 10, "VIS 系统纪律不足，网格、留白和跨模块复用方式需要更统一。", "VIS system discipline is not strong enough; grid, spacing, and cross-module reuse need to be more unified.", [["跨 Frame 或跨模块的网格、留白、字体层级缺少连续性", "Grid, spacing, and type hierarchy lack continuity across frames or modules."]])
       };
 
   return {

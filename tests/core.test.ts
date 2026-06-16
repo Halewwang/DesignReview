@@ -127,15 +127,16 @@ describe("AI review normalization", () => {
     const review = normalizeAiReview({
       conclusion: "建议小幅修改",
       dimension_scores: {
-        brand_consistency: { score: 24, max_score: 30, comment: "ok" },
-        layout_standard: { score: 23, max_score: 30, comment: "ok" },
+        brand_consistency: { score: 22, max_score: 25, comment: "ok" },
+        layout_standard: { score: 23, max_score: 25, comment: "ok" },
         ecommerce_expression: { score: 20, max_score: 25, comment: "ok" },
-        delivery_standard: { score: 12, max_score: 15, comment: "ok" }
+        delivery_standard: { score: 12, max_score: 15, comment: "ok" },
+        design_system_discipline: { score: 6, max_score: 10, comment: "ok" }
       },
       issues: []
     });
 
-    expect(review.total_score).toBe(79);
+    expect(review.total_score).toBe(83);
     expect(review.veto_issues).toEqual([]);
   });
 

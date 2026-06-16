@@ -104,10 +104,11 @@ type Detail = {
 type UploadedImageDraft = { id: string; fileName: string; mimeType: string; dataUrl: string; size: number };
 
 const aiRubric = [
-  { key: "brand_consistency", label: "品牌一致性", maxScore: 30, definition: "品牌资产、色彩、字体、图片气质是否符合 EMKE warm-minimal 与理性可信赖定位。" },
-  { key: "layout_standard", label: "排版规范", maxScore: 30, definition: "栅格、层级、留白、对齐和阅读路径是否稳定清晰。" },
+  { key: "brand_consistency", label: "品牌一致性", maxScore: 25, definition: "品牌资产、色彩、字体、图片气质是否符合 EMKE VIS 中的 warm-minimal 与理性可信赖定位。" },
+  { key: "layout_standard", label: "排版规范", maxScore: 25, definition: "栅格、层级、留白、对齐和阅读路径是否在 VIS 规范下稳定清晰。" },
   { key: "ecommerce_expression", label: "电商表达", maxScore: 25, definition: "产品、卖点、证明信息和 CTA 是否帮助用户快速决策。" },
-  { key: "delivery_standard", label: "交付规范", maxScore: 15, definition: "尺寸、安全区、文案准确性、素材完整性和导出质量是否达标。" }
+  { key: "delivery_standard", label: "交付规范", maxScore: 15, definition: "尺寸、安全区、文案准确性、素材完整性和导出质量是否达标。" },
+  { key: "design_system_discipline", label: "设计系统纪律", maxScore: 10, definition: "是否以 EMKE VIS 为最高依据，保持网格、字体层级、留白、组件/模块和跨 Frame 视觉系统一致。" }
 ];
 const defaultAccessCode = "emke.de";
 const languageStorageKey = "emke-language";
@@ -254,7 +255,7 @@ const uiCopy: Record<Language, Record<string, string>> = {
     "No AI result yet.": "尚无 AI 结果。",
     "AI pre-review total score": "AI 初审总分",
     "Pass rule: total score >= 85 and no veto issues.": "通过规则：总分 >= 85 且没有一票否决项。",
-    "Dimension evidence": "四维审核证据",
+    "Dimension evidence": "五维审核证据",
     "No clear deduction items": "无明确扣分项",
     "Related revision items": "关联修改项",
     "Veto risk {count} items": "一票否决风险 {count} 项",
@@ -327,9 +328,12 @@ const uiCopy: Record<Language, Record<string, string>> = {
 uiCopy.en = Object.fromEntries(Object.keys(uiCopy.zh).map((key) => [key, key]));
 Object.assign(uiCopy.en, {
   "品牌资产、色彩、字体、图片气质是否符合 EMKE warm-minimal 与理性可信赖定位。": "Whether brand assets, colors, typography, and image tone match EMKE's warm-minimal, rational, trustworthy positioning.",
+  "品牌资产、色彩、字体、图片气质是否符合 EMKE VIS 中的 warm-minimal 与理性可信赖定位。": "Whether brand assets, colors, typography, and image tone match EMKE VIS's warm-minimal, rational, trustworthy positioning.",
   "栅格、层级、留白、对齐和阅读路径是否稳定清晰。": "Whether grids, hierarchy, spacing, alignment, and reading flow are stable and clear.",
+  "栅格、层级、留白、对齐和阅读路径是否在 VIS 规范下稳定清晰。": "Whether grids, hierarchy, spacing, alignment, and reading flow stay stable and clear under the VIS standards.",
   "产品、卖点、证明信息和 CTA 是否帮助用户快速决策。": "Whether products, selling points, proof, and CTAs help users decide quickly.",
-  "尺寸、安全区、文案准确性、素材完整性和导出质量是否达标。": "Whether dimensions, safe areas, copy accuracy, asset completeness, and export quality meet delivery standards."
+  "尺寸、安全区、文案准确性、素材完整性和导出质量是否达标。": "Whether dimensions, safe areas, copy accuracy, asset completeness, and export quality meet delivery standards.",
+  "是否以 EMKE VIS 为最高依据，保持网格、字体层级、留白、组件/模块和跨 Frame 视觉系统一致。": "Whether the work treats EMKE VIS as the highest authority and keeps grid, type hierarchy, spacing, components/modules, and cross-frame visual systems consistent."
 });
 
 type I18nValue = string | number;
@@ -1313,6 +1317,7 @@ function IssueFilterBar({
         <option value="排版规范">{label("排版规范")}</option>
         <option value="电商表达">{label("电商表达")}</option>
         <option value="交付规范">{label("交付规范")}</option>
+        <option value="设计系统纪律">{label("设计系统纪律")}</option>
       </select>
       <select value={filters.severity ?? ""} onChange={(event) => onChange({ ...filters, severity: event.target.value })}>
         <option value="">{t("All severities")}</option>
@@ -1589,7 +1594,7 @@ function Setting({ label, value }: { label: string; value: any }) {
 }
 
 function scoreName(key: string) {
-  return ({ brand_consistency: "品牌一致性", layout_standard: "排版规范", ecommerce_expression: "电商表达", delivery_standard: "交付规范" } as Record<string, string>)[key] ?? key;
+  return ({ brand_consistency: "品牌一致性", layout_standard: "排版规范", ecommerce_expression: "电商表达", delivery_standard: "交付规范", design_system_discipline: "设计系统纪律" } as Record<string, string>)[key] ?? key;
 }
 
 function compactFrameLabel(name: string) {

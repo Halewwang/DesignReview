@@ -54,7 +54,8 @@ export type DimensionKey =
   | "brand_consistency"
   | "layout_standard"
   | "ecommerce_expression"
-  | "delivery_standard";
+  | "delivery_standard"
+  | "design_system_discipline";
 
 export type LocalizedText = {
   zh?: string;
@@ -76,7 +77,7 @@ export type ReviewIssue = {
   reviewResultId: string;
   submissionRound: number;
   title: string;
-  type: "品牌一致性" | "排版规范" | "电商表达" | "交付规范";
+  type: "品牌一致性" | "排版规范" | "电商表达" | "交付规范" | "设计系统纪律";
   severity: "严重" | "中等" | "轻微" | "建议";
   frameName?: string;
   locationDescription?: string;

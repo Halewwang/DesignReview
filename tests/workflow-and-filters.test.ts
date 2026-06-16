@@ -16,6 +16,14 @@ const baseTask = {
   aiTotalScore: 76
 };
 
+const validFiveDimensionScores = {
+  brand_consistency: { score: 22, max_score: 25, comment: "ok" },
+  layout_standard: { score: 21, max_score: 25, comment: "ok" },
+  ecommerce_expression: { score: 20, max_score: 25, comment: "ok" },
+  delivery_standard: { score: 14, max_score: 15, comment: "ok" },
+  design_system_discipline: { score: 9, max_score: 10, comment: "ok" }
+};
+
 describe("workflow guards", () => {
   it("allows valid status transitions and rejects skipped steps", () => {
     expect(() => assertTransition("needs_revision", ["needs_revision"], "重新提交")).not.toThrow();
@@ -66,14 +74,9 @@ describe("workflow guards", () => {
 describe("AI schema validation", () => {
   it("accepts valid AI output with high-confidence annotations", () => {
     const review = normalizeAiReview({
-      total_score: 80,
+      total_score: 86,
       conclusion: "建议小幅修改",
-      dimension_scores: {
-        brand_consistency: { score: 24, max_score: 30, comment: "ok" },
-        layout_standard: { score: 22, max_score: 30, comment: "ok" },
-        ecommerce_expression: { score: 20, max_score: 25, comment: "ok" },
-        delivery_standard: { score: 14, max_score: 15, comment: "ok" }
-      },
+      dimension_scores: validFiveDimensionScores,
       issues: [
         {
           title: "CTA 不够明确",
@@ -110,20 +113,21 @@ describe("AI schema validation", () => {
 
   it("preserves bilingual AI result fields for language-specific rendering", () => {
     const review = normalizeAiReview({
-      total_score: 80,
+      total_score: 86,
       conclusion: "建议小幅修改",
       dimension_scores: {
         brand_consistency: {
-          score: 24,
-          max_score: 30,
+          score: 22,
+          max_score: 25,
           comment: "中文点评",
           comment_i18n: { zh: "中文点评", en: "English comment" },
           deduction_items: ["中文扣分"],
           deduction_items_i18n: [{ zh: "中文扣分", en: "English deduction" }]
         },
-        layout_standard: { score: 22, max_score: 30, comment: "ok" },
-        ecommerce_expression: { score: 20, max_score: 25, comment: "ok" },
-        delivery_standard: { score: 14, max_score: 15, comment: "ok" }
+        layout_standard: validFiveDimensionScores.layout_standard,
+        ecommerce_expression: validFiveDimensionScores.ecommerce_expression,
+        delivery_standard: validFiveDimensionScores.delivery_standard,
+        design_system_discipline: validFiveDimensionScores.design_system_discipline
       },
       issues: [
         {
@@ -200,44 +204,49 @@ describe("AI schema validation", () => {
       normalizeAiReview({
         total_score: 88,
         dimension_scores: {
-          brand_consistency: { score: 24, max_score: 30, comment: "ok" },
-          layout_standard: { score: 24, max_score: 30, comment: "ok" },
-          ecommerce_expression: { score: 21, max_score: 25, comment: "ok" }
+          brand_consistency: { score: 22, max_score: 25, comment: "ok" },
+          layout_standard: { score: 21, max_score: 25, comment: "ok" },
+          ecommerce_expression: { score: 20, max_score: 25, comment: "ok" },
+          delivery_standard: { score: 14, max_score: 15, comment: "ok" }
         },
         issues: []
       })
-    ).toThrow(/缺少 delivery_standard/);
+    ).toThrow(/缺少 design_system_discipline/);
 
     expect(() =>
       normalizeAiReview({
         total_score: 90,
         dimension_scores: {
-          brand_consistency: { score: 24, max_score: 30, comment: "ok" },
-          layout_standard: { score: 24, max_score: 30, comment: "ok" },
-          ecommerce_expression: { score: 21, max_score: 25, comment: "ok" },
-          delivery_standard: { score: 14, max_score: 15, comment: "ok" }
+          brand_consistency: { score: 22, max_score: 25, comment: "ok" },
+          layout_standard: { score: 21, max_score: 25, comment: "ok" },
+          ecommerce_expression: { score: 20, max_score: 25, comment: "ok" },
+          delivery_standard: { score: 14, max_score: 15, comment: "ok" },
+          design_system_discipline: { score: 8, max_score: 10, comment: "ok" }
         },
         issues: []
       })
-    ).toThrow(/total_score 必须等于四维得分之和 83/);
+    ).toThrow(/total_score 必须等于五维得分之和 85/);
   });
 
   it("exposes rubric definitions and maps serious must-fix issues to revision", () => {
     expect(reviewRubric.passScore).toBe(85);
     expect(reviewRubric.dimensions.map((dimension) => [dimension.key, dimension.maxScore])).toEqual([
-      ["brand_consistency", 30],
-      ["layout_standard", 30],
+      ["brand_consistency", 25],
+      ["layout_standard", 25],
       ["ecommerce_expression", 25],
-      ["delivery_standard", 15]
+      ["delivery_standard", 15],
+      ["design_system_discipline", 10]
     ]);
+    expect(reviewRubric.dimensions.find((dimension) => dimension.key === "design_system_discipline")?.definition).toMatch(/VIS/);
 
     const review = normalizeAiReview({
       total_score: 86,
       dimension_scores: {
-        brand_consistency: { score: 26, max_score: 30, comment: "ok" },
-        layout_standard: { score: 25, max_score: 30, comment: "ok" },
-        ecommerce_expression: { score: 22, max_score: 25, comment: "ok" },
-        delivery_standard: { score: 13, max_score: 15, comment: "ok" }
+        brand_consistency: { score: 22, max_score: 25, comment: "ok" },
+        layout_standard: { score: 21, max_score: 25, comment: "ok" },
+        ecommerce_expression: { score: 20, max_score: 25, comment: "ok" },
+        delivery_standard: { score: 14, max_score: 15, comment: "ok" },
+        design_system_discipline: { score: 9, max_score: 10, comment: "ok" }
       },
       veto_issues: [{ title: "Logo 变形", reason: "品牌资产被拉伸" }],
       issues: [
@@ -254,6 +263,25 @@ describe("AI schema validation", () => {
     });
 
     expect(getAiDecisionStatus(review.total_score, review.veto_issues)).toBe("needs_revision");
+  });
+
+  it("accepts design-system discipline issues as a first-class VIS-based review type", () => {
+    const review = normalizeAiReview({
+      total_score: 86,
+      dimension_scores: validFiveDimensionScores,
+      issues: [
+        {
+          title: "跨 Frame 模块节奏不一致",
+          type: "设计系统纪律",
+          severity: "中等",
+          description: "相同内容模块在多个 Frame 中网格、留白和标题层级不一致。",
+          suggestion: "按 VIS 中的模块节奏和字体层级统一。",
+          must_fix: true
+        }
+      ]
+    });
+
+    expect(review.issues[0].type).toBe("设计系统纪律");
   });
 });
 
