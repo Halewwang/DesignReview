@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import fs from "node:fs";
 import os from "node:os";
@@ -24,6 +24,7 @@ beforeEach(() => {
   delete process.env.DATABASE_URL;
   delete process.env.POSTGRES_URL;
   delete process.env.POSTGRES_PRISMA_URL;
+  delete process.env.VERCEL;
   delete process.env.AI_PROVIDER_API_KEY;
   delete process.env.OPENAI_API_KEY;
 });
@@ -343,6 +344,98 @@ describe("API validation and health", () => {
     expect(otherResponse.body.error).toContain("无权删除他人任务");
     expect(adminResponse.status).toBe(200);
   });
+
+  it("filters generic placeholder annotations from review detail while preserving specific annotations", async () => {
+    await mutateDb((db) => {
+      db.tasks.push({
+        id: "task_annotation_filter",
+        title: "Annotation filter",
+        contentType: "Amazon A+ 页面",
+        description: "",
+        source: "upload",
+        status: "needs_revision",
+        priority: "普通",
+        submitterName: "Hale",
+        submitterId: "Hale",
+        submitterRole: "设计师",
+        createdAt: "2026-06-16T00:00:00.000Z",
+        updatedAt: "2026-06-16T00:00:00.000Z",
+        submissionRound: 1
+      });
+      db.issues.push(
+        {
+          id: "issue_generic_annotation",
+          taskId: "task_annotation_filter",
+          reviewResultId: "result_annotation_filter",
+          submissionRound: 1,
+          title: "Generic placeholder",
+          type: "电商表达",
+          severity: "中等",
+          frameName: "hero.jpg",
+          locationDescription: "主视觉右侧卖点区域",
+          description: "Generic placeholder coordinates should not be rendered as precise.",
+          suggestion: "Use text location instead.",
+          relatedStandardSource: "品牌设计规范.md",
+          relatedStandardSection: "Amazon PDP / A+ Content Rules",
+          mustFix: true,
+          resolutionStatus: "待解决",
+          annotationSuggestion: { type: "rect", xPercent: 7, yPercent: 28, widthPercent: 36, heightPercent: 30, confidence: 0.8, source: "ai" },
+          createdAt: "2026-06-16T00:00:00.000Z"
+        },
+        {
+          id: "issue_known_om03_annotation",
+          taskId: "task_annotation_filter",
+          reviewResultId: "result_annotation_filter",
+          submissionRound: 1,
+          title: "卖点层级与产品证明信息需要加强",
+          type: "电商表达",
+          severity: "中等",
+          frameName: "iwEcAqNqcGcDAQTRM6wF0RStBrABj6hVj31bTgnPcqKdlGkAB9IP2gviCAAJomltCgAL0gBZbx8.jpg",
+          locationDescription: "主视觉右侧卖点区域",
+          description: "Known OM03 seed issue should use its verified visual target.",
+          suggestion: "Use precise text-module coordinates.",
+          relatedStandardSource: "品牌设计规范.md",
+          relatedStandardSection: "Amazon PDP / A+ Content Rules",
+          mustFix: true,
+          resolutionStatus: "待解决",
+          annotationSuggestion: { type: "rect", xPercent: 7, yPercent: 28, widthPercent: 36, heightPercent: 30, confidence: 0.8, source: "ai" },
+          createdAt: "2026-06-16T00:00:00.000Z"
+        },
+        {
+          id: "issue_specific_annotation",
+          taskId: "task_annotation_filter",
+          reviewResultId: "result_annotation_filter",
+          submissionRound: 1,
+          title: "Specific annotation",
+          type: "电商表达",
+          severity: "中等",
+          frameName: "hero.jpg",
+          locationDescription: "模块标题区域",
+          description: "Specific coordinates should remain renderable.",
+          suggestion: "Keep this annotation.",
+          relatedStandardSource: "品牌设计规范.md",
+          relatedStandardSection: "Amazon PDP / A+ Content Rules",
+          mustFix: true,
+          resolutionStatus: "待解决",
+          annotationSuggestion: { type: "rect", xPercent: 12, yPercent: 34, widthPercent: 18, heightPercent: 9, confidence: 0.82, source: "ai" },
+          createdAt: "2026-06-16T00:00:00.000Z"
+        }
+      );
+    });
+
+    const response = await request(app).get("/api/reviews/task_annotation_filter").set(designerHeaders);
+
+    expect(response.status).toBe(200);
+    expect(response.body.issues.find((issue: any) => issue.id === "issue_generic_annotation")).not.toHaveProperty("annotationSuggestion");
+    expect(response.body.issues.find((issue: any) => issue.id === "issue_known_om03_annotation").annotationSuggestion).toMatchObject({
+      xPercent: 7.14,
+      yPercent: 21.97,
+      widthPercent: 42.15,
+      heightPercent: 10.85,
+      source: "manual"
+    });
+    expect(response.body.issues.find((issue: any) => issue.id === "issue_specific_annotation").annotationSuggestion).toMatchObject({ xPercent: 12, yPercent: 34, widthPercent: 18, heightPercent: 9 });
+  });
 });
 
 describe("storage adapter", () => {
@@ -361,5 +454,31 @@ describe("storage adapter", () => {
     const db = await readDb();
 
     expect(db.logs.map((log) => log.id)).toEqual(["log_1"]);
+  });
+
+  it("uses a writable tmp JSON store on Vercel when Postgres is not configured", async () => {
+    const tempCwd = fs.mkdtempSync(path.join(os.tmpdir(), "emke-vercel-cwd-"));
+    const runtimeDir = path.join(os.tmpdir(), "emke-design-review");
+    const runtimePath = path.join(runtimeDir, "reviews.json");
+    fs.mkdirSync(path.join(tempCwd, "data"), { recursive: true });
+    fs.writeFileSync(path.join(tempCwd, "data", "reviews.json"), JSON.stringify(createEmptyDb(), null, 2));
+    fs.rmSync(runtimeDir, { recursive: true, force: true });
+
+    const cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(tempCwd);
+    delete process.env.REVIEWS_DB_PATH;
+    process.env.VERCEL = "1";
+
+    try {
+      await mutateDb((db) => {
+        db.logs.push({ id: "log_vercel_tmp", actorName: "Hale", actorRole: "管理员", action: "vercel tmp smoke", createdAt: "2026-06-16T00:00:00.000Z" });
+      });
+
+      const written = JSON.parse(fs.readFileSync(runtimePath, "utf8"));
+      expect(written.logs.map((log: any) => log.id)).toEqual(["log_vercel_tmp"]);
+    } finally {
+      cwdSpy.mockRestore();
+      fs.rmSync(runtimeDir, { recursive: true, force: true });
+      fs.rmSync(tempCwd, { recursive: true, force: true });
+    }
   });
 });

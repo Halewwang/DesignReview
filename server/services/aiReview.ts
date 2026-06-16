@@ -383,9 +383,9 @@ async function callVisionModel(
   return JSON.parse(completion.choices[0]?.message?.content ?? "{}");
 }
 
-function aiImageDetail(): "low" | "high" | "auto" {
+export function aiImageDetail(): "low" | "high" | "auto" {
   const value = process.env.AI_IMAGE_DETAIL;
-  return value === "high" || value === "auto" ? value : "low";
+  return value === "low" || value === "auto" ? value : "high";
 }
 
 function aiProviderTimeoutMs() {
@@ -476,11 +476,7 @@ function mockReview(
       task.contentType === "Amazon A+ 页面"
         ? { zh: "Amazon PDP / A+ Content Rules", en: "Amazon PDP / A+ Content Rules" }
         : { zh: "Design Principles", en: "Design Principles" },
-    must_fix: index === 0,
-    annotation_suggestion:
-      index === 0
-        ? { type: "rect", x_percent: 7, y_percent: 28, width_percent: 36, height_percent: 30, confidence: 0.8 }
-        : undefined
+    must_fix: index === 0
   }));
 
   const dimension_scores = previousIssues.length

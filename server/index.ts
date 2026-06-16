@@ -5,7 +5,7 @@ import { getStorageMode, mutateDb, now, readDb, uid } from "./db.js";
 import { getFrameImages, parseFigmaUrl, readFileStructure } from "./services/figma.js";
 import { loadBrandStandardAsync, parseMarkdownSections, saveUploadedBrandStandardAsync } from "./services/vis.js";
 import { getAiProviderConfig, getAiProviderConfigAsync, getDefaultAiModel, getDefaultAiModelAsync, runAiReview, saveAiProviderConfigAsync, toReviewIssue } from "./services/aiReview.js";
-import { ContentType, ReviewFrame, ReviewTask, Role } from "./types.js";
+import { ContentType, ReviewFrame, ReviewIssue, ReviewTask, Role } from "./types.js";
 import { decodeHeaderValue } from "../src/shared/headerEncoding.js";
 import { assertCanDeleteTask, assertRole, assertTransition, canDeleteTaskStatus, canWithdrawTaskStatus, getAiDecisionStatus, getPreviousIssueRound, normalizeAiOnlyStatus } from "./services/workflow.js";
 
@@ -137,7 +137,7 @@ app.get("/api/reviews/:id", async (req, res) => {
   const taskIssues = db.issues.filter((issue) => issue.taskId === task.id).map((issue) => {
     const issueWithRound = { ...issue, submissionRound: issue.submissionRound ?? task.submissionRound ?? 1 };
     if (issue.relatedStandardSection === "Design Principles" && issue.locationDescription?.includes("主视觉右侧卖点区域")) {
-      return {
+      return normalizeAnnotationForResponse({
         ...issueWithRound,
         locationDescription: "左侧促销文案与核心卖点区域",
         annotationSuggestion: {
@@ -149,9 +149,9 @@ app.get("/api/reviews/:id", async (req, res) => {
           confidence: 0.8,
           source: "migrated" as const
         }
-      };
+      });
     }
-    return issueWithRound;
+    return normalizeAnnotationForResponse(issueWithRound);
   });
   const rounds = Array.from(new Set([task.submissionRound, ...db.results.filter((result) => result.taskId === task.id).map((result) => result.submissionRound)])).filter(Boolean).sort((a, b) => a - b);
   res.json({
@@ -663,6 +663,51 @@ function normalizeUploadedImages(images: any[]) {
 
 function normalizeAiOnlyTask(task: ReviewTask): ReviewTask {
   return { ...task, status: normalizeAiOnlyStatus(task.status, task.aiTotalScore) };
+}
+
+const OM03_UPLOAD_FRAME_NAME = "iwEcAqNqcGcDAQTRM6wF0RStBrABj6hVj31bTgnPcqKdlGkAB9IP2gviCAAJomltCgAL0gBZbx8.jpg";
+const OM03_TEXT_MODULE_ANNOTATION: NonNullable<ReviewIssue["annotationSuggestion"]> = {
+  type: "rect",
+  xPercent: 7.14,
+  yPercent: 21.97,
+  widthPercent: 42.15,
+  heightPercent: 10.85,
+  confidence: 0.95,
+  source: "manual"
+};
+
+function normalizeAnnotationForResponse<T extends Partial<ReviewIssue> & { annotationSuggestion?: ReviewIssue["annotationSuggestion"] }>(issue: T): T {
+  const annotation = issue.annotationSuggestion;
+  if (!annotation || !isGenericPlaceholderAnnotation(annotation)) return issue;
+  const preciseAnnotation = preciseAnnotationForKnownSeedIssue(issue);
+  if (preciseAnnotation) return { ...issue, annotationSuggestion: preciseAnnotation } as T;
+  const { annotationSuggestion, ...rest } = issue;
+  return rest as T;
+}
+
+function preciseAnnotationForKnownSeedIssue(issue: Partial<ReviewIssue>) {
+  if (
+    issue.frameName === OM03_UPLOAD_FRAME_NAME &&
+    issue.title === "卖点层级与产品证明信息需要加强" &&
+    issue.relatedStandardSection === "Amazon PDP / A+ Content Rules"
+  ) {
+    return OM03_TEXT_MODULE_ANNOTATION;
+  }
+  return undefined;
+}
+
+function isGenericPlaceholderAnnotation(annotation: NonNullable<ReviewIssue["annotationSuggestion"]>) {
+  return (
+    approximately(annotation.xPercent, 7) &&
+    approximately(annotation.yPercent, 28) &&
+    approximately(annotation.widthPercent ?? 0, 36) &&
+    approximately(annotation.heightPercent ?? 0, 30) &&
+    (annotation.confidence ?? 0) <= 0.8
+  );
+}
+
+function approximately(value: number, expected: number) {
+  return Math.abs(value - expected) < 0.001;
 }
 
 function errorStatus(error: unknown) {

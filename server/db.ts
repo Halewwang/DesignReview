@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import postgres from "postgres";
 import type { Sql } from "postgres";
@@ -42,7 +43,13 @@ export function getStorageMode() {
 }
 
 function databaseUrl() {
-  return process.env.DATABASE_URL || process.env.POSTGRES_URL || process.env.POSTGRES_PRISMA_URL;
+  return configuredUrl(process.env.DATABASE_URL) || configuredUrl(process.env.POSTGRES_URL) || configuredUrl(process.env.POSTGRES_PRISMA_URL);
+}
+
+function configuredUrl(value: string | undefined) {
+  const normalized = value?.trim();
+  if (!normalized || normalized === "\"\"" || normalized === "''") return undefined;
+  return normalized;
 }
 
 function dataDir() {
@@ -50,7 +57,21 @@ function dataDir() {
 }
 
 function dbPath() {
-  return process.env.REVIEWS_DB_PATH || path.join(dataDir(), "reviews.json");
+  if (process.env.REVIEWS_DB_PATH) return process.env.REVIEWS_DB_PATH;
+  if (process.env.VERCEL === "1") return path.join(os.tmpdir(), "emke-design-review", "reviews.json");
+  return bundledDbPath();
+}
+
+function bundledDbPath() {
+  return path.join(dataDir(), "reviews.json");
+}
+
+function initialJsonDb(targetPath: string) {
+  const seedPath = bundledDbPath();
+  if (path.resolve(seedPath) !== path.resolve(targetPath) && fs.existsSync(seedPath)) {
+    return normalizeDb(JSON.parse(fs.readFileSync(seedPath, "utf8")));
+  }
+  return createEmptyDb();
 }
 
 async function ensurePostgresSchema(url: string) {
@@ -101,7 +122,7 @@ export async function readStoreValue<T>(key: string): Promise<T | undefined> {
   const targetDir = path.dirname(targetPath);
   if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
   if (!fs.existsSync(targetPath)) {
-    fs.writeFileSync(targetPath, JSON.stringify(createEmptyDb(), null, 2));
+    fs.writeFileSync(targetPath, JSON.stringify(initialJsonDb(targetPath), null, 2));
   }
   if (key !== storeKey) return undefined;
   return JSON.parse(fs.readFileSync(targetPath, "utf8")) as T;

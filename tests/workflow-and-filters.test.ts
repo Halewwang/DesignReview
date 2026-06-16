@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assertCanDeleteTask, assertRole, assertTransition, canDeleteTaskStatus, canWithdrawTaskStatus, getAiDecisionStatus, getPreviousIssueRound, normalizeAiOnlyStatus } from "../server/services/workflow";
-import { normalizeAiReview, reviewRubric, toReviewIssue } from "../server/services/aiReview";
+import { aiImageDetail, normalizeAiReview, reviewRubric, runAiReview, toReviewIssue } from "../server/services/aiReview";
 import { dashboardLanes, filterIssues, filterTasks } from "../src/shared/filters";
 import { dashboardCommandCenter, reviewTimeline } from "../src/shared/reviewFlow";
 import { validateImageFiles } from "../src/shared/uploads";
@@ -23,6 +23,11 @@ const validFiveDimensionScores = {
   delivery_standard: { score: 14, max_score: 15, comment: "ok" },
   design_system_discipline: { score: 9, max_score: 10, comment: "ok" }
 };
+
+function restoreEnv(key: string, value: string | undefined) {
+  if (value === undefined) delete process.env[key];
+  else process.env[key] = value;
+}
 
 describe("workflow guards", () => {
   it("allows valid status transitions and rejects skipped steps", () => {
@@ -72,6 +77,79 @@ describe("workflow guards", () => {
 });
 
 describe("AI schema validation", () => {
+  it("defaults vision image detail to high for precise annotations", () => {
+    const previous = process.env.AI_IMAGE_DETAIL;
+    delete process.env.AI_IMAGE_DETAIL;
+    try {
+      expect(aiImageDetail()).toBe("high");
+      process.env.AI_IMAGE_DETAIL = "low";
+      expect(aiImageDetail()).toBe("low");
+    } finally {
+      restoreEnv("AI_IMAGE_DETAIL", previous);
+    }
+  });
+
+  it("does not emit canvas annotation from local fallback without vision coordinates", async () => {
+    const previousEnv = {
+      aiConfigPath: process.env.AI_CONFIG_PATH,
+      aiProviderApiKey: process.env.AI_PROVIDER_API_KEY,
+      openaiApiKey: process.env.OPENAI_API_KEY,
+      databaseUrl: process.env.DATABASE_URL,
+      postgresUrl: process.env.POSTGRES_URL,
+      postgresPrismaUrl: process.env.POSTGRES_PRISMA_URL
+    };
+    process.env.AI_CONFIG_PATH = `/tmp/emke-missing-ai-config-${Date.now()}.json`;
+    delete process.env.AI_PROVIDER_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.DATABASE_URL;
+    delete process.env.POSTGRES_URL;
+    delete process.env.POSTGRES_PRISMA_URL;
+
+    try {
+      const review = await runAiReview({
+        task: {
+          id: "task_fallback_annotation",
+          title: "Fallback annotation",
+          contentType: "Amazon A+ 页面",
+          description: "",
+          source: "upload",
+          status: "ai_reviewing",
+          priority: "普通",
+          submitterName: "Hale",
+          submitterRole: "设计师",
+          createdAt: "2026-06-16T00:00:00.000Z",
+          updatedAt: "2026-06-16T00:00:00.000Z",
+          submissionRound: 1
+        },
+        frames: [
+          {
+            id: "frame_fallback_annotation",
+            taskId: "task_fallback_annotation",
+            figmaNodeId: "upload_1",
+            pageName: "上传图片",
+            frameName: "hero.jpg",
+            width: 1471,
+            height: 3595,
+            selected: true,
+            sortOrder: 0,
+            exportedImageUrl: "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
+          }
+        ],
+        sections: [],
+        previousIssues: []
+      });
+
+      expect(review.issues[0].annotation_suggestion).toBeUndefined();
+    } finally {
+      restoreEnv("AI_CONFIG_PATH", previousEnv.aiConfigPath);
+      restoreEnv("AI_PROVIDER_API_KEY", previousEnv.aiProviderApiKey);
+      restoreEnv("OPENAI_API_KEY", previousEnv.openaiApiKey);
+      restoreEnv("DATABASE_URL", previousEnv.databaseUrl);
+      restoreEnv("POSTGRES_URL", previousEnv.postgresUrl);
+      restoreEnv("POSTGRES_PRISMA_URL", previousEnv.postgresPrismaUrl);
+    }
+  });
+
   it("accepts valid AI output with high-confidence annotations", () => {
     const review = normalizeAiReview({
       total_score: 86,
