@@ -497,10 +497,11 @@ async function completeAiReview(taskId: string, submissionRound: number, request
   let db = await readDb();
   let task = db.tasks.find((item) => item.id === taskId);
   if (!task || task.status !== "ai_reviewing" || task.submissionRound !== submissionRound) return;
-  let selectedFrames = db.frames.filter((frame) => frame.taskId === task.id && frame.selected);
+  const currentTask = task;
+  let selectedFrames = db.frames.filter((frame) => frame.taskId === currentTask.id && frame.selected);
   if (selectedFrames.length === 0) throw new Error("请先选择需要审核的 Frame");
 
-  if (task.source === "upload") {
+  if (currentTask.source === "upload") {
     if (selectedFrames.some((frame) => !frame.exportedImageUrl && !frame.thumbnailUrl)) {
       throw new Error("上传图片数据缺失，请重新上传图片");
     }
@@ -509,9 +510,9 @@ async function completeAiReview(taskId: string, submissionRound: number, request
       exportedImageUrl: frame.exportedImageUrl || frame.thumbnailUrl
     }));
   } else {
-    if (!task.figmaFileKey) throw new Error("任务尚未读取 Figma 文件");
-    await logWithActor(task.id, requestActor, "导出 Figma Frame 图片");
-    const exports = await getFrameImages(task.figmaFileKey, selectedFrames.map((frame) => frame.figmaNodeId), "png", 2);
+    if (!currentTask.figmaFileKey) throw new Error("任务尚未读取 Figma 文件");
+    await logWithActor(currentTask.id, requestActor, "导出 Figma Frame 图片");
+    const exports = await getFrameImages(currentTask.figmaFileKey, selectedFrames.map((frame) => frame.figmaNodeId), "png", 2);
     selectedFrames = await mutateDb((currentDb) => {
       currentDb.frames.forEach((frame) => {
         if (frame.taskId === taskId && exports[frame.figmaNodeId]) frame.exportedImageUrl = exports[frame.figmaNodeId];
