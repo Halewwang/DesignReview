@@ -1,6 +1,7 @@
 import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import ArrowLeft from "lucide-react/dist/esm/icons/arrow-left.mjs";
+import CheckCircle2 from "lucide-react/dist/esm/icons/check-circle-2.mjs";
 import ChevronRight from "lucide-react/dist/esm/icons/chevron-right.mjs";
 import FileText from "lucide-react/dist/esm/icons/file-text.mjs";
 import Gauge from "lucide-react/dist/esm/icons/gauge.mjs";
@@ -226,6 +227,9 @@ const uiCopy: Record<Language, Record<string, string>> = {
     "Delete": "删除",
     "Decision summary": "审核结论",
     "Workflow actions": "流程操作",
+    "Admin approve": "通过",
+    "Confirm approving this review task as an admin? It will be marked as approved archive.": "确认以管理员身份通过并归档当前项目？",
+    "Admin approve failed": "管理员通过失败",
     "No workflow action needed": "当前无需流程操作",
     "Evidence and issues": "证据与问题",
     "Supporting history": "辅助记录",
@@ -1024,6 +1028,7 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
   const [activeIssueId, setActiveIssueId] = useState("");
   const [error, setError] = useState("");
   const [resubmitBusy, setResubmitBusy] = useState(false);
+  const [adminApproveBusy, setAdminApproveBusy] = useState(false);
   const uploadResubmitInputRef = useRef<HTMLInputElement>(null);
   const frames = detailData?.frames.filter((frame) => frame.selected || frame.exportedImageUrl) ?? [];
   const activeFrame = frames.find((frame) => frame.id === activeFrameId) ?? frames[0];
@@ -1132,6 +1137,20 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
     }
   }
 
+  async function adminApproveTask() {
+    if (!window.confirm(t("Confirm approving this review task as an admin? It will be marked as approved archive."))) return;
+    setError("");
+    setAdminApproveBusy(true);
+    try {
+      await api(`/api/reviews/${taskId}/admin-approve`, session, { method: "POST" });
+      reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("Admin approve failed"));
+    } finally {
+      setAdminApproveBusy(false);
+    }
+  }
+
   async function deleteTask() {
     if (!window.confirm(t("Confirm deleting this review task? Related Frames, results, and issues will also be deleted."))) return;
     setError("");
@@ -1148,8 +1167,9 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
   const currentUserKeys = [session.userId, session.name].map((value) => String(value ?? "").trim().toLowerCase()).filter(Boolean);
   const ownsTask = [detailData.task.submitterId, detailData.task.submitterName].map((value) => String(value ?? "").trim().toLowerCase()).some((value) => currentUserKeys.includes(value));
   const canDelete = (session.role === "管理员" || ownsTask) && ["draft", "figma_reading", "frame_selection", "ai_reviewing", "needs_revision", "resubmitted", "approved", "archived", "figma_read_failed", "ai_review_failed"].includes(detailData.task.status);
+  const canAdminApprove = session.role === "管理员" && detailData.task.status !== "approved" && detailData.task.status !== "archived";
   const workflowActions = (
-    <section className="panel decision-actions-panel">
+    <section className="panel decision-actions-panel preview-workflow-panel">
       <div className="panel-section-head">
         <div>
           <h3>{t("Workflow actions")}</h3>
@@ -1157,10 +1177,11 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
         </div>
       </div>
       <div className="decision-actions">
+        {canAdminApprove && <button className="primary admin-approve-action" type="button" onClick={adminApproveTask} disabled={adminApproveBusy}><CheckCircle2 size={15} /> {adminApproveBusy ? t("Submitting...") : t("Admin approve")}</button>}
         {detailData.task.status === "needs_revision" && detailData.task.source === "upload" ? (
           <>
             <button className="primary" type="button" onClick={() => uploadResubmitInputRef.current?.click()} disabled={resubmitBusy}><UploadCloud size={15} /> {resubmitBusy ? t("Submitting...") : t("Upload images and resubmit")}</button>
-            <input ref={uploadResubmitInputRef} className="hidden-file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => resubmitUploadedImages(event.target.files)} />
+            <input ref={uploadResubmitInputRef} aria-label={t("Upload images and resubmit")} className="hidden-file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => resubmitUploadedImages(event.target.files)} />
           </>
         ) : detailData.task.status === "needs_revision" && <button className="primary" type="button" onClick={resubmit}><RefreshCw size={15} /> {t("Resubmit")}</button>}
         {detailData.task.status === "figma_read_failed" && <button className="primary" type="button" onClick={retryReadFigma}><RefreshCw size={15} /> {t("Reload Figma")}</button>}
@@ -1170,7 +1191,7 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
           {canDelete && <button className="danger compact" type="button" onClick={deleteTask}><Trash2 size={15} /> {t("Delete")}</button>}
           <button className="action-button icon-only" type="button" onClick={reload} aria-label={t("Refresh")} title={t("Refresh")}><RefreshCw size={15} /></button>
         </div>
-        {!canWithdraw && !canDelete && detailData.task.status !== "needs_revision" && detailData.task.status !== "figma_read_failed" && detailData.task.status !== "ai_review_failed" && <span className="meta">{t("No workflow action needed")}</span>}
+        {!canAdminApprove && !canWithdraw && !canDelete && detailData.task.status !== "needs_revision" && detailData.task.status !== "figma_read_failed" && detailData.task.status !== "ai_review_failed" && <span className="meta">{t("No workflow action needed")}</span>}
       </div>
     </section>
   );
@@ -1181,8 +1202,8 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
         <div className="detail-title-block">
           {editingMeta ? (
             <div className="meta-editor">
-              <input value={metaDraft.title} onChange={(event) => setMetaDraft({ ...metaDraft, title: event.target.value })} />
-              <input value={metaDraft.submitterId} onChange={(event) => setMetaDraft({ ...metaDraft, submitterId: event.target.value })} placeholder={t("Submitter ID")} />
+              <input aria-label={t("Task name")} value={metaDraft.title} onChange={(event) => setMetaDraft({ ...metaDraft, title: event.target.value })} />
+              <input aria-label={t("Submitter ID")} value={metaDraft.submitterId} onChange={(event) => setMetaDraft({ ...metaDraft, submitterId: event.target.value })} placeholder={t("Submitter ID")} />
             </div>
           ) : (
             <>
@@ -1233,10 +1254,10 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
               ) : <div className="empty">{t("No exported image")}</div>}
             </div>
           </div>
+          {workflowActions}
         </div>
         <aside className="review-sidebar">
           <ScorePanel result={result} status={detailData.task.status} issues={issues} />
-          {workflowActions}
           <section className="panel review-list-panel">
             <div className="panel-head"><h3>{t("Evidence and issues")}</h3><span>{filteredIssues.length}/{issues.length}</span></div>
             <IssueFilterBar filters={issueFilters} onChange={setIssueFilters} frames={frames} rounds={rounds} selectedRound={selectedRound} onRoundChange={setSelectedRound} />
@@ -1380,8 +1401,8 @@ function ScorePanel({ result, status, issues = [] }: { result: any; status?: Rev
         <span><b>{mustFixCount}</b>{t("Must fix")}</span>
       </div>
       <div className={`veto-strip ${vetoIssues.length ? "risk" : ""}`}>{vetoIssues.length ? t("Veto risk {count} items", { count: vetoIssues.length }) : t("No veto risk found")}</div>
-      <details className="dimension-details">
-        <summary>{t("Dimension evidence")}</summary>
+      <section className="dimension-details" aria-label={t("Dimension evidence")}>
+        <div className="dimension-details-heading">{t("Dimension evidence")}</div>
         <div className="dimension-grid">
           {Object.entries(scores).map(([key, value]: any) => {
             const rubric = aiRubric.find((item) => item.key === key);
@@ -1410,7 +1431,7 @@ function ScorePanel({ result, status, issues = [] }: { result: any; status?: Rev
             );
           })}
         </div>
-      </details>
+      </section>
     </section>
   );
 }
@@ -1451,17 +1472,30 @@ function localizedIssueText(issue: Issue, field: keyof NonNullable<Issue["i18n"]
 }
 
 function AnnotationBox({ issue, index, active, onFocus }: { issue: Issue; index: number; active?: boolean; onFocus?: () => void }) {
+  const { dynamic, language } = useI18n();
   const a = issue.annotationSuggestion!;
-  const width = a.widthPercent ?? 4;
-  const height = a.heightPercent ?? 4;
+  const left = Math.min(98, Math.max(0, a.xPercent));
+  const top = Math.min(98, Math.max(0, a.yPercent));
+  const minimumSize = a.type === "point" ? 12 : 6;
+  const width = Math.min(100 - left, Math.max(a.widthPercent ?? minimumSize, minimumSize));
+  const height = Math.min(100 - top, Math.max(a.heightPercent ?? minimumSize, minimumSize));
   const broad = width >= 88 && height >= 88;
   const pinX = Math.min(96, Math.max(4, a.xPercent + width / 2));
   const pinY = Math.min(96, Math.max(4, a.yPercent + height / 2));
-  const region = !broad || active ? <span className={`annotation-region ${issue.severity} ${active ? "active" : ""} ${broad ? "broad" : ""}`} style={{ left: `${a.xPercent}%`, top: `${a.yPercent}%`, width: `${width}%`, height: `${height}%` }} /> : null;
+  const noteX = Math.min(72, Math.max(2, left));
+  const noteY = Math.max(2, top - 9);
+  const title = displayIssueTitle(issue, language, dynamic);
+  const suggestion = localizedIssueText(issue, "suggestion", language, dynamic);
   return (
     <>
-      {region}
-      <button title={issue.title} className={`annotation-pin ${issue.severity} ${active ? "active" : ""}`} type="button" onMouseEnter={onFocus} onFocus={onFocus} style={{ left: `${pinX}%`, top: `${pinY}%` }}>{index}</button>
+      <span aria-hidden="true" className={`annotation-region ${issue.severity} ${active ? "active" : ""} ${broad ? "broad" : ""}`} style={{ left: `${left}%`, top: `${top}%`, width: `${width}%`, height: `${height}%` }}>
+        <span>{index}</span>
+      </span>
+      <button title={title} className={`annotation-note ${issue.severity} ${active ? "active" : ""}`} type="button" onMouseEnter={onFocus} onFocus={onFocus} style={{ left: `${noteX}%`, top: `${noteY}%` }}>
+        <strong>{index}. {title}</strong>
+        <em>{suggestion}</em>
+      </button>
+      <button aria-label={title} title={title} className={`annotation-pin ${issue.severity} ${active ? "active" : ""}`} type="button" onMouseEnter={onFocus} onFocus={onFocus} style={{ left: `${pinX}%`, top: `${pinY}%` }}>{index}</button>
     </>
   );
 }

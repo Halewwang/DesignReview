@@ -377,6 +377,50 @@ describe("API validation and health", () => {
     expect(directorResponse.body.error).toContain("AI 审核直接给出结论");
   });
 
+  it("lets admins directly approve and archive a review task", async () => {
+    await mutateDb((db) => {
+      db.tasks.push({
+        id: "task_admin_approve",
+        title: "Admin approve",
+        contentType: "Amazon A+ 页面",
+        description: "",
+        source: "upload",
+        status: "needs_revision",
+        priority: "普通",
+        submitterName: "Hale",
+        submitterId: "Hale",
+        submitterRole: "设计师",
+        aiTotalScore: 76,
+        createdAt: "2026-06-18T00:00:00.000Z",
+        updatedAt: "2026-06-18T00:00:00.000Z",
+        submissionRound: 1
+      });
+    });
+
+    const designerResponse = await request(app)
+      .post("/api/reviews/task_admin_approve/admin-approve")
+      .set(designerHeaders)
+      .send({});
+    const adminResponse = await request(app)
+      .post("/api/reviews/task_admin_approve/admin-approve")
+      .set(adminHeaders)
+      .send({});
+
+    expect(designerResponse.status).toBe(403);
+    expect(designerResponse.body.error).toContain("无权通过归档");
+    expect(adminResponse.status).toBe(200);
+    expect(adminResponse.body).toMatchObject({ id: "task_admin_approve", status: "approved" });
+
+    const db = await readDb();
+    expect(db.tasks.find((task) => task.id === "task_admin_approve")?.status).toBe("approved");
+    expect(db.logs[0]).toMatchObject({
+      taskId: "task_admin_approve",
+      actorName: "Admin",
+      actorRole: "管理员",
+      action: "管理员通过归档"
+    });
+  });
+
   it("allows designers to delete their own tasks but blocks deleting another submitter's task", async () => {
     await mutateDb((db) => {
       db.tasks.push(

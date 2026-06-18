@@ -398,6 +398,26 @@ app.post("/api/reviews/:id/director-decision", (req, res) => {
   res.status(410).json({ error: "设计总监终审流程已取消，任务现在由 AI 审核直接给出结论" });
 });
 
+app.post("/api/reviews/:id/admin-approve", async (req, res) => {
+  const currentActor = actor(req);
+  try {
+    assertRole(currentActor.actorRole, [], "通过归档任务");
+    const saved = await mutateDb((db) => {
+      const task = db.tasks.find((item) => item.id === req.params.id);
+      if (!task) throw new Error("任务不存在");
+      task.status = "approved";
+      task.finalDecision = "通过";
+      task.finalReason = "管理员直接通过归档";
+      task.updatedAt = now();
+      db.logs.unshift({ id: uid("log"), taskId: task.id, ...currentActor, action: "管理员通过归档", createdAt: now() });
+      return task;
+    });
+    res.json(saved);
+  } catch (error) {
+    res.status(errorStatus(error)).json({ error: errorMessage(error) });
+  }
+});
+
 app.post("/api/reviews/:id/resubmit", async (req, res) => {
   let startedResubmit = false;
   let resubmitSource: ReviewTask["source"] | undefined;

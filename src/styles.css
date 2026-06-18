@@ -3549,14 +3549,38 @@ nav button,
   z-index: 2;
   pointer-events: none;
   border: 2px solid var(--accent);
-  background: color-mix(in oklch, var(--accent) 10%, transparent);
+  background: color-mix(in oklch, var(--accent) 16%, transparent);
   border-radius: 8px;
-  box-shadow: 0 0 0 1px rgba(255,255,255,.18);
+  min-width: 34px;
+  min-height: 34px;
+  line-height: 1;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.38), 0 12px 28px rgba(0,0,0,.22);
+}
+
+.annotation-region span {
+  position: absolute;
+  left: -12px;
+  top: -12px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: var(--accent);
+  border: 2px solid rgba(255,255,255,.92);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 850;
+  box-shadow: 0 8px 18px rgba(0,0,0,.32);
 }
 
 .annotation-region.严重 {
   border-color: var(--danger);
-  background: color-mix(in oklch, var(--danger) 10%, transparent);
+  background: color-mix(in oklch, var(--danger) 16%, transparent);
+}
+
+.annotation-region.严重 span {
+  background: var(--danger);
 }
 
 .annotation-region.broad {
@@ -3569,6 +3593,58 @@ nav button,
 .annotation-region.active {
   z-index: 3;
   box-shadow: 0 0 0 2px rgba(255,255,255,.78), 0 0 0 6px rgba(0,153,255,.28);
+}
+
+.annotation-note {
+  position: absolute;
+  pointer-events: auto;
+  z-index: 5;
+  width: min(280px, 42%);
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--background) 82%, transparent);
+  border: 1px solid color-mix(in oklch, var(--accent) 64%, rgba(255,255,255,.26));
+  border-radius: 8px;
+  line-height: 1.28;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 12px 28px rgba(0,0,0,.34);
+  backdrop-filter: blur(12px);
+}
+
+.annotation-note strong,
+.annotation-note em {
+  min-width: 0;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+}
+
+.annotation-note strong {
+  -webkit-line-clamp: 1;
+  font-size: 12px;
+  font-weight: 820;
+}
+
+.annotation-note em {
+  -webkit-line-clamp: 2;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.annotation-note.严重 {
+  border-color: color-mix(in oklch, var(--danger) 68%, rgba(255,255,255,.26));
+}
+
+.annotation-note.active,
+.annotation-note:hover,
+.annotation-note:focus-visible {
+  outline: none;
+  border-color: rgba(255,255,255,.82);
+  background: color-mix(in oklch, var(--surface) 92%, var(--background));
 }
 
 .annotation-pin {
@@ -4085,6 +4161,8 @@ nav button,
 
 .workspace.detail .preview-panel {
   min-width: 0;
+  display: grid;
+  gap: 12px;
 }
 
 .workspace.detail .review-sidebar {
@@ -4122,6 +4200,30 @@ nav button,
 
 .decision-actions-panel .panel-section-head p {
   margin-top: 3px;
+}
+
+.preview-workflow-panel {
+  padding: 14px 16px;
+}
+
+.preview-workflow-panel .panel-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.preview-workflow-panel .decision-actions {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  align-items: center;
+}
+
+.preview-workflow-panel .decision-secondary-actions {
+  justify-self: stretch;
+}
+
+.preview-workflow-panel .admin-approve-action {
+  color: #06120a;
+  background: var(--success);
 }
 
 .decision-actions {
@@ -4179,14 +4281,13 @@ nav button,
   border-top: 1px solid var(--separator);
 }
 
-.dimension-details summary {
+.dimension-details-heading {
   min-height: 42px;
   display: flex;
   align-items: center;
   color: var(--foreground);
   font-size: 13px;
   font-weight: 760;
-  cursor: pointer;
 }
 
 .dimension-details .dimension-grid {
@@ -4643,7 +4744,7 @@ nav button,
   font-size: 19px;
 }
 
-.dimension-details summary {
+.dimension-details-heading {
   min-height: 36px;
   font-size: 12.5px;
 }
