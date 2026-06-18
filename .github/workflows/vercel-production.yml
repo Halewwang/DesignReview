@@ -18,8 +18,8 @@ jobs:
       contents: read
     env:
       VERCEL_CLI_VERSION: 54.14.2
-      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      VERCEL_ORG_ID: team_qYa7bDiADxpQ1n1IlN3iEBJj
+      VERCEL_PROJECT_ID: prj_u9kcosKWWhhMZUtqv9PiYOdCIlEU
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
 
     steps:
@@ -28,14 +28,10 @@ jobs:
 
       - name: Validate Vercel secrets
         run: |
-          missing=0
-          for name in VERCEL_TOKEN VERCEL_ORG_ID VERCEL_PROJECT_ID; do
-            if [ -z "${!name}" ]; then
-              echo "::error::Missing GitHub secret: ${name}"
-              missing=1
-            fi
-          done
-          exit "$missing"
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "::error::Missing GitHub secret: VERCEL_TOKEN"
+            exit 1
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
