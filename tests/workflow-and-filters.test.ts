@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { assertCanDeleteTask, assertRole, assertTransition, canDeleteTaskStatus, canWithdrawTaskStatus, getAiDecisionStatus, getPreviousIssueRound, normalizeAiOnlyStatus } from "../server/services/workflow";
 import { aiImageDetail, normalizeAiReview, reviewRubric, runAiReview, toReviewIssue } from "../server/services/aiReview";
 import { dashboardLanes, filterIssues, filterTasks } from "../src/shared/filters";
-import { dashboardCommandCenter, reviewTimeline } from "../src/shared/reviewFlow";
+import { dashboardCommandCenter, normalizeStoredReviewNavigation, reviewTimeline, selectReviewRoundData } from "../src/shared/reviewFlow";
 import { validateImageFiles } from "../src/shared/uploads";
 
 const baseTask = {
@@ -455,6 +455,38 @@ describe("front-end filters", () => {
       ["revision", "active"],
       ["approved", "idle"]
     ]);
+  });
+
+  it("restores task detail or Frame selection navigation only when an active task id exists", () => {
+    expect(normalizeStoredReviewNavigation({ view: "detail", activeTaskId: "task_123" })).toEqual({
+      view: "detail",
+      activeTaskId: "task_123"
+    });
+    expect(normalizeStoredReviewNavigation({ view: "frames", activeTaskId: "task_123" })).toEqual({
+      view: "frames",
+      activeTaskId: "task_123"
+    });
+    expect(normalizeStoredReviewNavigation({ view: "detail" })).toEqual({
+      view: "dashboard",
+      activeTaskId: null
+    });
+    expect(normalizeStoredReviewNavigation({ view: "settings", activeTaskId: "task_123" })).toEqual({
+      view: "settings",
+      activeTaskId: null
+    });
+  });
+
+  it("does not fall back to an older review result when the current submission round is still reviewing", () => {
+    const selected = selectReviewRoundData({
+      selectedRound: "latest",
+      taskSubmissionRound: 2,
+      results: [{ id: "result_round_1", submissionRound: 1, totalScore: 76 }],
+      issues: [{ id: "issue_round_1", submissionRound: 1, title: "Old issue" }]
+    });
+
+    expect(selected.currentRound).toBe(2);
+    expect(selected.result).toBeUndefined();
+    expect(selected.issues).toEqual([]);
   });
 
   it("validates upload batches with the same helper for create and resubmit flows", () => {

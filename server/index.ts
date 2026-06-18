@@ -14,11 +14,13 @@ dotenv.config();
 export const app = express();
 const port = Number(process.env.API_PORT ?? 8787);
 const accessCode = process.env.REVIEW_ACCESS_CODE ?? "emke.de";
+type RequestActor = { actorName: string; actorRole: Role };
+const aiReviewJobs = new Set<Promise<void>>();
 
 app.use(cors());
 app.use(express.json({ limit: process.env.API_JSON_LIMIT ?? "240mb" }));
 
-function actor(req: express.Request) {
+function actor(req: express.Request): RequestActor {
   return {
     actorName: decodeHeaderValue(req.header("x-actor-name"), "未命名"),
     actorRole: decodeHeaderValue(req.header("x-actor-role"), "设计师") as Role
@@ -199,10 +201,9 @@ app.post("/api/reviews", async (req, res) => {
 });
 
 app.post("/api/reviews/upload-images", async (req, res) => {
-  const { actorName } = actor(req);
-  let taskId = "";
+  const requestActor = actor(req);
   try {
-    assertRole(actor(req).actorRole, ["设计师"], "创建图片审核任务");
+    assertRole(requestActor.actorRole, ["设计师"], "创建图片审核任务");
     validateCreateUploadTaskInput(req.body);
     const images = normalizeUploadedImages(req.body.images);
     const created = await mutateDb((db) => {
@@ -214,8 +215,8 @@ app.post("/api/reviews/upload-images", async (req, res) => {
         source: "upload",
         status: "ai_reviewing",
         priority: req.body.priority ?? "普通",
-        submitterName: req.body.submitterName || actorName,
-        submitterId: req.body.submitterId || actorName,
+        submitterName: req.body.submitterName || requestActor.actorName,
+        submitterId: req.body.submitterId || requestActor.actorName,
         submitterRole: "设计师",
         createdAt: now(),
         updatedAt: now(),
@@ -236,45 +237,13 @@ app.post("/api/reviews/upload-images", async (req, res) => {
       }));
       db.tasks.unshift(task);
       db.frames.push(...frames);
-      db.logs.unshift({ id: uid("log"), taskId: task.id, ...actor(req), action: `上传 ${frames.length} 张图片并创建审核任务`, createdAt: now() });
-      db.logs.unshift({ id: uid("log"), taskId: task.id, ...actor(req), action: "开始 AI 初审", createdAt: now() });
+      db.logs.unshift({ id: uid("log"), taskId: task.id, ...requestActor, action: `上传 ${frames.length} 张图片并创建审核任务`, createdAt: now() });
+      db.logs.unshift({ id: uid("log"), taskId: task.id, ...requestActor, action: "开始 AI 初审", createdAt: now() });
       return { task, frames };
     });
-    taskId = created.task.id;
-
-    const standard = await loadBrandStandardAsync();
-    const sections = parseMarkdownSections(standard.content);
-    const review = await runAiReview({ task: created.task, frames: created.frames, sections, previousIssues: [], standardSource: standard });
-    const resultId = uid("result");
-
-    const saved = await mutateDb((db) => {
-      const task = db.tasks.find((item) => item.id === created.task.id)!;
-      task.status = getAiDecisionStatus(review.total_score, review.veto_issues);
-      task.aiTotalScore = review.total_score;
-      task.updatedAt = now();
-      const result = {
-        id: resultId,
-        taskId: task.id,
-        submissionRound: task.submissionRound,
-        totalScore: review.total_score,
-        conclusion: review.conclusion,
-        dimensionScores: review.dimension_scores as any,
-        rawAiResponse: review,
-        createdAt: now()
-      };
-      db.results.push(result);
-      const frames = db.frames.filter((frame) => frame.taskId === task.id && frame.selected);
-      const issues = review.issues.map((issue: any) => {
-        const frame = frames.find((item) => item.frameName === (issue.frame_name ?? issue.frameName));
-        return toReviewIssue(issue, task.id, resultId, frame, task.submissionRound);
-      });
-      db.issues.push(...issues);
-      db.logs.unshift({ id: uid("log"), taskId: task.id, ...actor(req), action: "完成 AI 初审", createdAt: now() });
-      return { task, frames, result, issues };
-    });
-    res.json(saved);
+    queueAiReviewJob(created.task.id, created.task.submissionRound, requestActor);
+    res.status(202).json({ accepted: true, task: created.task, frames: created.frames });
   } catch (error) {
-    if (taskId) await setTaskStatus(taskId, "ai_review_failed", `AI 初审失败：${errorMessage(error)}`, req);
     res.status(errorStatus(error)).json({ error: errorMessage(error) });
   }
 });
@@ -392,72 +361,31 @@ app.post("/api/reviews/:id/select-frames", async (req, res) => {
 
 app.post("/api/reviews/:id/start-ai-review", async (req, res) => {
   let startedAiReview = false;
+  const requestActor = actor(req);
   try {
-    assertRole(actor(req).actorRole, ["设计师"], "开始 AI 初审");
+    assertRole(requestActor.actorRole, ["设计师"], "开始 AI 初审");
     const maxFrames = Number(process.env.MAX_FRAMES_PER_TASK ?? 12);
     const db = await readDb();
     const task = db.tasks.find((item) => item.id === req.params.id);
     if (!task) return res.status(404).json({ error: "任务不存在" });
     assertTransition(task.status, ["frame_selection", "ai_review_failed"], "开始 AI 初审");
-    let selectedFrames = db.frames.filter((frame) => frame.taskId === task.id && frame.selected);
+    const selectedFrames = db.frames.filter((frame) => frame.taskId === task.id && frame.selected);
     if (selectedFrames.length === 0) return res.status(400).json({ error: "请先选择需要审核的 Frame" });
     if (selectedFrames.length > maxFrames) return res.status(400).json({ error: `单次最多审核 ${maxFrames} 个 Frame` });
-
-    await setTaskStatus(task.id, "ai_reviewing", "开始 AI 初审", req);
-    startedAiReview = true;
     if (task.source === "upload") {
       if (selectedFrames.some((frame) => !frame.exportedImageUrl && !frame.thumbnailUrl)) {
         throw new Error("上传图片数据缺失，请重新上传图片");
       }
-      selectedFrames = selectedFrames.map((frame) => ({
-        ...frame,
-        exportedImageUrl: frame.exportedImageUrl || frame.thumbnailUrl
-      }));
     } else {
       if (!task.figmaFileKey) return res.status(400).json({ error: "任务尚未读取 Figma 文件" });
-      const exports = await getFrameImages(task.figmaFileKey, selectedFrames.map((frame) => frame.figmaNodeId), "png", 2);
-      selectedFrames = await mutateDb((currentDb) => {
-        currentDb.frames.forEach((frame) => {
-          if (frame.taskId === task.id && exports[frame.figmaNodeId]) frame.exportedImageUrl = exports[frame.figmaNodeId];
-        });
-        return currentDb.frames.filter((frame) => frame.taskId === task.id && frame.selected);
-      });
     }
 
-    const standard = await loadBrandStandardAsync();
-    const sections = parseMarkdownSections(standard.content);
-    const previousRound = getPreviousIssueRound(task.submissionRound, db.issues.filter((issue) => issue.taskId === task.id).map((issue) => issue.submissionRound ?? 1));
-    const previousIssues = previousRound ? db.issues.filter((issue) => issue.taskId === task.id && (issue.submissionRound ?? 1) === previousRound) : [];
-    const review = await runAiReview({ task, frames: selectedFrames, sections, previousIssues, standardSource: standard });
-    const resultId = uid("result");
-
-    const saved = await mutateDb((currentDb) => {
-      const currentTask = currentDb.tasks.find((item) => item.id === task.id)!;
-      currentTask.status = getAiDecisionStatus(review.total_score, review.veto_issues);
-      currentTask.aiTotalScore = review.total_score;
-      currentTask.updatedAt = now();
-      const result = {
-        id: resultId,
-        taskId: task.id,
-        submissionRound: currentTask.submissionRound,
-        totalScore: review.total_score,
-        conclusion: review.conclusion,
-        dimensionScores: review.dimension_scores as any,
-        rawAiResponse: review,
-        createdAt: now()
-      };
-      currentDb.results.push(result);
-      const issues = review.issues.map((issue: any) => {
-        const frame = selectedFrames.find((item) => item.frameName === (issue.frame_name ?? issue.frameName));
-        return toReviewIssue(issue, task.id, resultId, frame, currentTask.submissionRound);
-      });
-      currentDb.issues.push(...issues);
-      currentDb.logs.unshift({ id: uid("log"), taskId: task.id, ...actor(req), action: "完成 AI 初审", createdAt: now() });
-      return { task: currentTask, result, issues };
-    });
-    res.json(saved);
+    const current = await setTaskStatus(task.id, "ai_reviewing", "开始 AI 初审", requestActor);
+    startedAiReview = true;
+    queueAiReviewJob(current.id, current.submissionRound, requestActor);
+    res.status(202).json({ accepted: true, task: current, frames: selectedFrames });
   } catch (error) {
-    if (startedAiReview) await setTaskStatus(req.params.id, "ai_review_failed", `AI 初审失败：${errorMessage(error)}`, req);
+    if (startedAiReview) await setTaskStatus(req.params.id, "ai_review_failed", `AI 初审失败：${errorMessage(error)}`, requestActor);
     res.status(errorStatus(error)).json({ error: errorMessage(error) });
   }
 });
@@ -473,8 +401,9 @@ app.post("/api/reviews/:id/director-decision", (req, res) => {
 app.post("/api/reviews/:id/resubmit", async (req, res) => {
   let startedResubmit = false;
   let resubmitSource: ReviewTask["source"] | undefined;
+  const requestActor = actor(req);
   try {
-    assertRole(actor(req).actorRole, ["设计师"], "重新提交");
+    assertRole(requestActor.actorRole, ["设计师"], "重新提交");
     const existing = await getTask(req.params.id);
     assertTransition(normalizeAiOnlyStatus(existing.status), ["needs_revision"], "重新提交");
     resubmitSource = existing.source;
@@ -485,7 +414,7 @@ app.post("/api/reviews/:id/resubmit", async (req, res) => {
       current.submissionRound += 1;
       current.updatedAt = now();
       if (req.body.figmaUrl) current.figmaUrl = req.body.figmaUrl;
-      db.logs.unshift({ id: uid("log"), taskId: current.id, ...actor(req), action: "重新提交", createdAt: now() });
+      db.logs.unshift({ id: uid("log"), taskId: current.id, ...requestActor, action: "重新提交", createdAt: now() });
       return current;
     });
     startedResubmit = true;
@@ -510,45 +439,12 @@ app.post("/api/reviews/:id/resubmit", async (req, res) => {
           sortOrder: index
         }));
         db.frames.push(...frames);
-        db.logs.unshift({ id: uid("log"), taskId: task.id, ...actor(req), action: `上传 ${frames.length} 张图片并重新提交`, createdAt: now() });
-        db.logs.unshift({ id: uid("log"), taskId: task.id, ...actor(req), action: "开始 AI 初审", createdAt: now() });
+        db.logs.unshift({ id: uid("log"), taskId: task.id, ...requestActor, action: `上传 ${frames.length} 张图片并重新提交`, createdAt: now() });
+        db.logs.unshift({ id: uid("log"), taskId: task.id, ...requestActor, action: "开始 AI 初审", createdAt: now() });
         return { task: current, frames };
       });
-
-      const db = await readDb();
-      const previousRound = getPreviousIssueRound(created.task.submissionRound, db.issues.filter((issue) => issue.taskId === task.id).map((issue) => issue.submissionRound ?? 1));
-      const previousIssues = previousRound ? db.issues.filter((issue) => issue.taskId === task.id && (issue.submissionRound ?? 1) === previousRound) : [];
-      const standard = await loadBrandStandardAsync();
-      const sections = parseMarkdownSections(standard.content);
-      const review = await runAiReview({ task: created.task, frames: created.frames, sections, previousIssues, standardSource: standard });
-      const resultId = uid("result");
-
-      const saved = await mutateDb((db) => {
-        const current = db.tasks.find((item) => item.id === task.id)!;
-        current.status = getAiDecisionStatus(review.total_score, review.veto_issues);
-        current.aiTotalScore = review.total_score;
-        current.updatedAt = now();
-        const result = {
-          id: resultId,
-          taskId: task.id,
-          submissionRound: current.submissionRound,
-          totalScore: review.total_score,
-          conclusion: review.conclusion,
-          dimensionScores: review.dimension_scores as any,
-          rawAiResponse: review,
-          createdAt: now()
-        };
-        db.results.push(result);
-        const frames = db.frames.filter((frame) => frame.taskId === task.id && frame.selected);
-        const issues = review.issues.map((issue: any) => {
-          const frame = frames.find((item) => item.frameName === (issue.frame_name ?? issue.frameName));
-          return toReviewIssue(issue, task.id, resultId, frame, current.submissionRound);
-        });
-        db.issues.push(...issues);
-        db.logs.unshift({ id: uid("log"), taskId: task.id, ...actor(req), action: "完成 AI 初审", createdAt: now() });
-        return { task: current, frames, result, issues };
-      });
-      return res.json(saved);
+      queueAiReviewJob(created.task.id, created.task.submissionRound, requestActor);
+      return res.status(202).json({ accepted: true, task: created.task, frames: created.frames });
     }
     if (!task.figmaUrl) throw new Error("任务没有 Figma 项目链接");
     const parsed = parseFigmaUrl(task.figmaUrl);
@@ -565,12 +461,133 @@ app.post("/api/reviews/:id/resubmit", async (req, res) => {
     });
     res.json({ task: updated, frames: structure.frames });
   } catch (error) {
-    if (startedResubmit) await setTaskStatus(req.params.id, resubmitSource === "upload" ? "ai_review_failed" : "figma_read_failed", resubmitSource === "upload" ? `AI 初审失败：${errorMessage(error)}` : `Figma 读取失败：${errorMessage(error)}`, req);
+    if (startedResubmit) await setTaskStatus(req.params.id, resubmitSource === "upload" ? "ai_review_failed" : "figma_read_failed", resubmitSource === "upload" ? `AI 初审失败：${errorMessage(error)}` : `Figma 读取失败：${errorMessage(error)}`, requestActor);
     res.status(errorStatus(error)).json({ error: errorMessage(error) });
   }
 });
 
-async function setTaskStatus(id: string, status: ReviewTask["status"], action?: string, req?: express.Request) {
+function queueAiReviewJob(taskId: string, submissionRound: number, requestActor: RequestActor) {
+  if (process.env.AI_REVIEW_DISABLE_BACKGROUND === "1") return;
+  const job = new Promise<void>((resolve) => {
+    const timer = setTimeout(() => {
+      runAiReviewJob(taskId, submissionRound, requestActor).finally(resolve);
+    }, aiReviewBackgroundDelayMs());
+    timer.unref?.();
+  });
+  aiReviewJobs.add(job);
+  job.finally(() => aiReviewJobs.delete(job));
+}
+
+export async function drainAiReviewJobsForTest() {
+  while (aiReviewJobs.size > 0) {
+    await Promise.allSettled([...aiReviewJobs]);
+  }
+}
+
+async function runAiReviewJob(taskId: string, submissionRound: number, requestActor: RequestActor) {
+  try {
+    await completeAiReview(taskId, submissionRound, requestActor);
+  } catch (error) {
+    console.error("AI review job failed", errorMessage(error));
+    await markAiReviewFailed(taskId, submissionRound, requestActor, errorMessage(error));
+  }
+}
+
+async function completeAiReview(taskId: string, submissionRound: number, requestActor: RequestActor) {
+  let db = await readDb();
+  let task = db.tasks.find((item) => item.id === taskId);
+  if (!task || task.status !== "ai_reviewing" || task.submissionRound !== submissionRound) return;
+  let selectedFrames = db.frames.filter((frame) => frame.taskId === task.id && frame.selected);
+  if (selectedFrames.length === 0) throw new Error("请先选择需要审核的 Frame");
+
+  if (task.source === "upload") {
+    if (selectedFrames.some((frame) => !frame.exportedImageUrl && !frame.thumbnailUrl)) {
+      throw new Error("上传图片数据缺失，请重新上传图片");
+    }
+    selectedFrames = selectedFrames.map((frame) => ({
+      ...frame,
+      exportedImageUrl: frame.exportedImageUrl || frame.thumbnailUrl
+    }));
+  } else {
+    if (!task.figmaFileKey) throw new Error("任务尚未读取 Figma 文件");
+    await logWithActor(task.id, requestActor, "导出 Figma Frame 图片");
+    const exports = await getFrameImages(task.figmaFileKey, selectedFrames.map((frame) => frame.figmaNodeId), "png", 2);
+    selectedFrames = await mutateDb((currentDb) => {
+      currentDb.frames.forEach((frame) => {
+        if (frame.taskId === taskId && exports[frame.figmaNodeId]) frame.exportedImageUrl = exports[frame.figmaNodeId];
+      });
+      return currentDb.frames.filter((frame) => frame.taskId === taskId && frame.selected);
+    });
+  }
+
+  await logWithActor(task.id, requestActor, "AI 正在分析图片并生成报告");
+  db = await readDb();
+  task = db.tasks.find((item) => item.id === taskId);
+  if (!task || task.status !== "ai_reviewing" || task.submissionRound !== submissionRound) return;
+  const previousRound = getPreviousIssueRound(submissionRound, db.issues.filter((issue) => issue.taskId === task.id).map((issue) => issue.submissionRound ?? 1));
+  const previousIssues = previousRound ? db.issues.filter((issue) => issue.taskId === task.id && (issue.submissionRound ?? 1) === previousRound) : [];
+  const standard = await loadBrandStandardAsync();
+  const sections = parseMarkdownSections(standard.content);
+  const review = await runAiReview({ task, frames: selectedFrames, sections, previousIssues, standardSource: standard });
+  const resultId = uid("result");
+
+  await mutateDb((currentDb) => {
+    const currentTask = currentDb.tasks.find((item) => item.id === taskId);
+    if (!currentTask || currentTask.status !== "ai_reviewing" || currentTask.submissionRound !== submissionRound) return;
+    currentTask.status = getAiDecisionStatus(review.total_score, review.veto_issues);
+    currentTask.aiTotalScore = review.total_score;
+    currentTask.updatedAt = now();
+    currentDb.results = currentDb.results.filter((result) => !(result.taskId === taskId && result.submissionRound === submissionRound));
+    currentDb.issues = currentDb.issues.filter((issue) => !(issue.taskId === taskId && issue.submissionRound === submissionRound));
+    const result = {
+      id: resultId,
+      taskId,
+      submissionRound,
+      totalScore: review.total_score,
+      conclusion: review.conclusion,
+      dimensionScores: review.dimension_scores as any,
+      rawAiResponse: review,
+      createdAt: now()
+    };
+    currentDb.results.push(result);
+    const frames = currentDb.frames.filter((frame) => frame.taskId === taskId && frame.selected);
+    const issues = review.issues.map((issue: any) => {
+      const frame = frames.find((item) => item.frameName === (issue.frame_name ?? issue.frameName));
+      return toReviewIssue(issue, taskId, resultId, frame, submissionRound);
+    });
+    currentDb.issues.push(...issues);
+    currentDb.logs.unshift({ id: uid("log"), taskId, ...requestActor, action: "完成 AI 初审", createdAt: now() });
+  });
+}
+
+async function markAiReviewFailed(taskId: string, submissionRound: number, requestActor: RequestActor, message: string) {
+  await mutateDb((db) => {
+    const task = db.tasks.find((item) => item.id === taskId);
+    if (!task || task.status !== "ai_reviewing" || task.submissionRound !== submissionRound) return;
+    task.status = "ai_review_failed";
+    task.updatedAt = now();
+    db.logs.unshift({ id: uid("log"), taskId, ...requestActor, action: `AI 初审失败：${message}`, createdAt: now() });
+  });
+}
+
+async function logWithActor(taskId: string | undefined, requestActor: RequestActor, action: string) {
+  await mutateDb((db) => {
+    db.logs.unshift({ id: uid("log"), taskId, ...requestActor, action, createdAt: now() });
+  });
+}
+
+function aiReviewBackgroundDelayMs() {
+  const delay = Number(process.env.AI_REVIEW_BACKGROUND_DELAY_MS ?? 0);
+  return Number.isFinite(delay) && delay > 0 ? delay : 0;
+}
+
+function actorFrom(source?: express.Request | RequestActor): RequestActor {
+  if (!source) return { actorName: "System", actorRole: "管理员" };
+  if (typeof (source as express.Request).header === "function") return actor(source as express.Request);
+  return source as RequestActor;
+}
+
+async function setTaskStatus(id: string, status: ReviewTask["status"], action?: string, source?: express.Request | RequestActor) {
   return mutateDb((db) => {
     const task = db.tasks.find((item) => item.id === id);
     if (!task) throw new Error("任务不存在");
@@ -580,7 +597,7 @@ async function setTaskStatus(id: string, status: ReviewTask["status"], action?: 
       db.logs.unshift({
         id: uid("log"),
         taskId: task.id,
-        ...(req ? actor(req) : { actorName: "System", actorRole: "管理员" as Role }),
+        ...actorFrom(source),
         action,
         createdAt: now()
       });

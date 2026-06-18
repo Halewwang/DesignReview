@@ -30,9 +30,21 @@ export type ReviewTimelineStage = {
   state: ReviewTimelineStageState;
 };
 
+export type ReviewAppView = "dashboard" | "new" | "frames" | "detail" | "vis" | "settings";
+
+export type ReviewNavigationState = {
+  view: ReviewAppView;
+  activeTaskId: string | null;
+};
+
+export type ReviewRoundRecord = {
+  submissionRound?: number;
+};
+
 const actionStatuses = new Set(["draft", "frame_selection", "figma_read_failed", "ai_review_failed"]);
 const liveReviewStatuses = new Set(["figma_reading", "ai_reviewing", "resubmitted"]);
 const referenceStatuses = new Set(["approved", "archived"]);
+const reviewViews = new Set<ReviewAppView>(["dashboard", "new", "frames", "detail", "vis", "settings"]);
 
 export function dashboardCommandCenter<T extends ReviewFlowTask>(tasks: T[], currentUser: ReviewFlowUser) {
   const primaryAction = tasks.filter((task) => actionStatuses.has(task.status ?? "") || (task.status === "needs_revision" && isCurrentUserTask(task, currentUser)));
@@ -74,6 +86,45 @@ export function isCurrentUserTask(task: ReviewFlowTask, currentUser: ReviewFlowU
     (currentUser.currentUserId && taskUserId === normalize(currentUser.currentUserId)) ||
     (currentUser.currentUserName && taskUserName === normalize(currentUser.currentUserName))
   );
+}
+
+export function normalizeStoredReviewNavigation(value: unknown): ReviewNavigationState {
+  const input = value && typeof value === "object" ? value as Partial<ReviewNavigationState> : {};
+  const view = reviewViews.has(input.view as ReviewAppView) ? input.view as ReviewAppView : "dashboard";
+  const activeTaskId = typeof input.activeTaskId === "string" && input.activeTaskId.trim() ? input.activeTaskId.trim() : null;
+  if ((view === "detail" || view === "frames") && !activeTaskId) return { view: "dashboard", activeTaskId: null };
+  return {
+    view,
+    activeTaskId: view === "detail" || view === "frames" ? activeTaskId : null
+  };
+}
+
+export function selectReviewRoundData<TResult extends ReviewRoundRecord, TIssue extends ReviewRoundRecord>({
+  selectedRound,
+  taskSubmissionRound,
+  results,
+  issues
+}: {
+  selectedRound: number | "latest";
+  taskSubmissionRound?: number;
+  results: TResult[];
+  issues: TIssue[];
+}) {
+  const fallbackRound = taskSubmissionRound ?? 1;
+  const rounds = Array.from(
+    new Set([
+      fallbackRound,
+      ...results.map((result) => result.submissionRound ?? fallbackRound),
+      ...issues.map((issue) => issue.submissionRound ?? fallbackRound)
+    ])
+  ).filter((round) => Number.isFinite(round)).sort((a, b) => a - b);
+  const currentRound = selectedRound === "latest" ? rounds.at(-1) ?? fallbackRound : selectedRound;
+  return {
+    rounds,
+    currentRound,
+    result: results.filter((result) => (result.submissionRound ?? fallbackRound) === currentRound).at(-1),
+    issues: issues.filter((issue) => (issue.submissionRound ?? fallbackRound) === currentRound)
+  };
 }
 
 const timelineKeys: ReviewTimelineStageKey[] = ["intake", "ai_review", "ai_decision", "revision", "approved"];

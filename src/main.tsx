@@ -19,7 +19,7 @@ import "./styles.css";
 import { formatDeductionItem } from "./shared/aiDisplay";
 import { encodeHeaderValue } from "./shared/headerEncoding";
 import { filterIssues, filterTasks, IssueFilters, TaskFilters } from "./shared/filters";
-import { dashboardCommandCenter, reviewTimeline, type ReviewTimelineStageState } from "./shared/reviewFlow";
+import { dashboardCommandCenter, normalizeStoredReviewNavigation, reviewTimeline, selectReviewRoundData, type ReviewAppView, type ReviewTimelineStageState } from "./shared/reviewFlow";
 import { scoreTone } from "./shared/scoreDisplay";
 import { detectPreferredLanguage, hasHanText, languageLabel, localizeDynamicText, type Language } from "./shared/i18n";
 import { localizedArrayItem, reviewText } from "./shared/localizedReviewText";
@@ -73,6 +73,7 @@ type Frame = {
 };
 type Issue = {
   id: string;
+  submissionRound?: number;
   title: string;
   type: string;
   severity: string;
@@ -112,6 +113,7 @@ const aiRubric = [
 ];
 const defaultAccessCode = "emke.de";
 const languageStorageKey = "emke-language";
+const navigationStorageKey = "emke-navigation:v1";
 
 const uiCopy: Record<Language, Record<string, string>> = {
   zh: {
@@ -358,6 +360,15 @@ function useI18n() {
   return value;
 }
 
+function readStoredNavigation() {
+  try {
+    const raw = localStorage.getItem(navigationStorageKey);
+    return normalizeStoredReviewNavigation(raw ? JSON.parse(raw) : undefined);
+  } catch {
+    return normalizeStoredReviewNavigation(undefined);
+  }
+}
+
 function App() {
   const [language, setLanguageState] = useState<Language>(() => {
     const savedLanguage = localStorage.getItem(languageStorageKey);
@@ -396,8 +407,19 @@ function App() {
     }
     return saved;
   });
-  const [view, setView] = useState<"dashboard" | "new" | "frames" | "detail" | "vis" | "settings">("dashboard");
-  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
+  const [navigation, setNavigation] = useState(() => readStoredNavigation());
+  const { view, activeTaskId } = navigation;
+
+  useEffect(() => {
+    localStorage.setItem(navigationStorageKey, JSON.stringify(navigation));
+  }, [navigation]);
+
+  function navigate(nextView: ReviewAppView, taskId?: string | null) {
+    setNavigation((current) => normalizeStoredReviewNavigation({
+      view: nextView,
+      activeTaskId: taskId ?? current.activeTaskId
+    }));
+  }
 
   if (!session) {
     return (
@@ -408,12 +430,12 @@ function App() {
   }
   return (
     <I18nContext.Provider value={i18n}>
-      <AppErrorBoundary resetKey={`${view}:${activeTaskId ?? ""}`} onDashboard={() => { setView("dashboard"); setActiveTaskId(null); }}>
-        <Shell session={session} view={view} onView={setView}>
-          {view === "dashboard" && <Dashboard session={session} onNew={() => setView("new")} onOpen={(id) => { setActiveTaskId(id); setView("detail"); }} />}
-          {view === "new" && <NewTask session={session} onBack={() => setView("dashboard")} onFrames={(id) => { setActiveTaskId(id); setView("frames"); }} onDetail={(id) => { setActiveTaskId(id); setView("detail"); }} />}
-          {view === "frames" && activeTaskId && <FrameSelection session={session} taskId={activeTaskId} onBack={() => setView("dashboard")} onDetail={() => setView("detail")} />}
-          {view === "detail" && activeTaskId && <ReviewDetail session={session} taskId={activeTaskId} onFrames={() => setView("frames")} onDashboard={() => setView("dashboard")} />}
+      <AppErrorBoundary resetKey={`${view}:${activeTaskId ?? ""}`} onDashboard={() => navigate("dashboard")}>
+        <Shell session={session} view={view} onView={navigate}>
+          {view === "dashboard" && <Dashboard session={session} onNew={() => navigate("new")} onOpen={(id) => navigate("detail", id)} />}
+          {view === "new" && <NewTask session={session} onBack={() => navigate("dashboard")} onFrames={(id) => navigate("frames", id)} onDetail={(id) => navigate("detail", id)} />}
+          {view === "frames" && activeTaskId && <FrameSelection session={session} taskId={activeTaskId} onBack={() => navigate("dashboard")} onDetail={() => navigate("detail", activeTaskId)} />}
+          {view === "detail" && activeTaskId && <ReviewDetail session={session} taskId={activeTaskId} onFrames={() => navigate("frames", activeTaskId)} onDashboard={() => navigate("dashboard")} />}
           {view === "vis" && <VisPage session={session} />}
           {view === "settings" && <SettingsPage session={session} />}
         </Shell>
@@ -488,7 +510,7 @@ function AccessScreen({ onEnter }: { onEnter: (session: Session) => void }) {
   );
 }
 
-function Shell({ session, view, onView, children }: { session: Session; view: string; onView: (view: any) => void; children: React.ReactNode }) {
+function Shell({ session, view, onView, children }: { session: Session; view: string; onView: (view: ReviewAppView) => void; children: React.ReactNode }) {
   const { t, label } = useI18n();
   return (
     <div className="app-shell">
@@ -992,6 +1014,7 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
   const { t, label, dynamic } = useI18n();
   const { data, error: loadError, reload } = useApi<Detail>(`/api/reviews/${taskId}`, session, null as any);
   const { data: health } = useApi<any>("/api/health", session, null);
+  const detailData = data?.task.id === taskId ? data : null;
   const [activeFrameId, setActiveFrameId] = useState("");
   const [zoom, setZoom] = useState(100);
   const [editingMeta, setEditingMeta] = useState(false);
@@ -1002,24 +1025,26 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
   const [error, setError] = useState("");
   const [resubmitBusy, setResubmitBusy] = useState(false);
   const uploadResubmitInputRef = useRef<HTMLInputElement>(null);
-  const frames = data?.frames.filter((frame) => frame.selected || frame.exportedImageUrl) ?? [];
+  const frames = detailData?.frames.filter((frame) => frame.selected || frame.exportedImageUrl) ?? [];
   const activeFrame = frames.find((frame) => frame.id === activeFrameId) ?? frames[0];
-  const rounds = data?.rounds?.length ? data.rounds : data?.results.map((result) => result.submissionRound) ?? [];
-  const latestRound = rounds.length ? Math.max(...rounds) : data?.task.submissionRound ?? 1;
-  const currentRound = selectedRound === "latest" ? latestRound : selectedRound;
-  const result = data?.results.filter((item) => item.submissionRound === currentRound).at(-1) ?? data?.results.at(-1);
-  const issues = (data?.issues ?? []).filter((issue: any) => (issue.submissionRound ?? data?.task.submissionRound ?? 1) === currentRound);
+  const roundData = selectReviewRoundData({
+    selectedRound,
+    taskSubmissionRound: detailData?.task.submissionRound,
+    results: detailData?.results ?? [],
+    issues: detailData?.issues ?? []
+  });
+  const { rounds, currentRound, result, issues } = roundData;
   const filteredIssues = filterIssues(issues, issueFilters);
   const visibleAnnotatedIssues = filteredIssues.filter((issue) => issue.annotationSuggestion && (!issue.frameName || !activeFrame?.frameName || issue.frameName === activeFrame.frameName));
   const annotationIndexByIssueId = new Map(visibleAnnotatedIssues.map((issue, index) => [issue.id, index + 1]));
-  const aiReviewing = data?.task.status === "ai_reviewing";
+  const aiReviewing = detailData?.task.status === "ai_reviewing";
   const maxUploadImages = Number(health?.maxUploadImagesPerTask ?? 9);
-  const reviewUpdatedAt = data?.task.updatedAt ? Date.parse(data.task.updatedAt) : NaN;
+  const reviewUpdatedAt = detailData?.task.updatedAt ? Date.parse(detailData.task.updatedAt) : NaN;
   const reviewAgeMinutes = Number.isFinite(reviewUpdatedAt) ? Math.max(0, Math.floor((Date.now() - reviewUpdatedAt) / 60000)) : 0;
 
   useEffect(() => {
-    if (data?.task) setMetaDraft({ title: data.task.title, submitterId: data.task.submitterId ?? "" });
-  }, [data?.task?.id, data?.task?.title, data?.task?.submitterId]);
+    if (detailData?.task) setMetaDraft({ title: detailData.task.title, submitterId: detailData.task.submitterId ?? "" });
+  }, [detailData?.task?.id, detailData?.task?.title, detailData?.task?.submitterId]);
   useEffect(() => {
     if (!aiReviewing) return;
     const timer = window.setInterval(() => reload(), 10000);
@@ -1118,34 +1143,34 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
     }
   }
 
-  if (!data) return <main className="workspace"><div className="panel">{t("Loading review details...")}</div></main>;
-  const canWithdraw = ["frame_selection", "needs_revision", "resubmitted", "figma_read_failed", "ai_review_failed"].includes(data.task.status);
+  if (!detailData) return <main className="workspace"><div className="panel">{loadError || t("Loading review details...")}</div></main>;
+  const canWithdraw = ["frame_selection", "needs_revision", "resubmitted", "figma_read_failed", "ai_review_failed"].includes(detailData.task.status);
   const currentUserKeys = [session.userId, session.name].map((value) => String(value ?? "").trim().toLowerCase()).filter(Boolean);
-  const ownsTask = [data.task.submitterId, data.task.submitterName].map((value) => String(value ?? "").trim().toLowerCase()).some((value) => currentUserKeys.includes(value));
-  const canDelete = (session.role === "管理员" || ownsTask) && ["draft", "figma_reading", "frame_selection", "ai_reviewing", "needs_revision", "resubmitted", "approved", "archived", "figma_read_failed", "ai_review_failed"].includes(data.task.status);
+  const ownsTask = [detailData.task.submitterId, detailData.task.submitterName].map((value) => String(value ?? "").trim().toLowerCase()).some((value) => currentUserKeys.includes(value));
+  const canDelete = (session.role === "管理员" || ownsTask) && ["draft", "figma_reading", "frame_selection", "ai_reviewing", "needs_revision", "resubmitted", "approved", "archived", "figma_read_failed", "ai_review_failed"].includes(detailData.task.status);
   const workflowActions = (
     <section className="panel decision-actions-panel">
       <div className="panel-section-head">
         <div>
           <h3>{t("Workflow actions")}</h3>
-          <p>{label(data.task.status)}</p>
+          <p>{label(detailData.task.status)}</p>
         </div>
       </div>
       <div className="decision-actions">
-        {data.task.status === "needs_revision" && data.task.source === "upload" ? (
+        {detailData.task.status === "needs_revision" && detailData.task.source === "upload" ? (
           <>
             <button className="primary" type="button" onClick={() => uploadResubmitInputRef.current?.click()} disabled={resubmitBusy}><UploadCloud size={15} /> {resubmitBusy ? t("Submitting...") : t("Upload images and resubmit")}</button>
             <input ref={uploadResubmitInputRef} className="hidden-file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => resubmitUploadedImages(event.target.files)} />
           </>
-        ) : data.task.status === "needs_revision" && <button className="primary" type="button" onClick={resubmit}><RefreshCw size={15} /> {t("Resubmit")}</button>}
-        {data.task.status === "figma_read_failed" && <button className="primary" type="button" onClick={retryReadFigma}><RefreshCw size={15} /> {t("Reload Figma")}</button>}
-        {data.task.status === "ai_review_failed" && <button className="primary" type="button" onClick={retryAiReview}><Sparkles size={15} /> {t("Retry AI review")}</button>}
+        ) : detailData.task.status === "needs_revision" && <button className="primary" type="button" onClick={resubmit}><RefreshCw size={15} /> {t("Resubmit")}</button>}
+        {detailData.task.status === "figma_read_failed" && <button className="primary" type="button" onClick={retryReadFigma}><RefreshCw size={15} /> {t("Reload Figma")}</button>}
+        {detailData.task.status === "ai_review_failed" && <button className="primary" type="button" onClick={retryAiReview}><Sparkles size={15} /> {t("Retry AI review")}</button>}
         <div className="decision-secondary-actions" aria-label={t("Workflow actions")}>
           {canWithdraw && <button className="action-button" type="button" onClick={withdrawTask}><Undo2 size={15} /> {t("Withdraw")}</button>}
           {canDelete && <button className="danger compact" type="button" onClick={deleteTask}><Trash2 size={15} /> {t("Delete")}</button>}
           <button className="action-button icon-only" type="button" onClick={reload} aria-label={t("Refresh")} title={t("Refresh")}><RefreshCw size={15} /></button>
         </div>
-        {!canWithdraw && !canDelete && data.task.status !== "needs_revision" && data.task.status !== "figma_read_failed" && data.task.status !== "ai_review_failed" && <span className="meta">{t("No workflow action needed")}</span>}
+        {!canWithdraw && !canDelete && detailData.task.status !== "needs_revision" && detailData.task.status !== "figma_read_failed" && detailData.task.status !== "ai_review_failed" && <span className="meta">{t("No workflow action needed")}</span>}
       </div>
     </section>
   );
@@ -1161,21 +1186,21 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
             </div>
           ) : (
             <>
-              <h2>{data.task.title}</h2>
+              <h2>{detailData.task.title}</h2>
               <div className="detail-meta-grid">
-                <span className="round-badge">{t("Round {round} submission", { round: data.task.submissionRound })}</span>
-                <span>{data.task.description || t("No project notes")}</span>
-                <span>{t("Submitter: {name}", { name: data.task.submitterName })}{data.task.submitterId ? ` · ID ${data.task.submitterId}` : ""}</span>
+                <span className="round-badge">{t("Round {round} submission", { round: detailData.task.submissionRound })}</span>
+                <span>{detailData.task.description || t("No project notes")}</span>
+                <span>{t("Submitter: {name}", { name: detailData.task.submitterName })}{detailData.task.submitterId ? ` · ID ${detailData.task.submitterId}` : ""}</span>
               </div>
             </>
           )}
         </div>
         <div className="detail-tag-block">
-          <span className="round-badge">{label(data.task.contentType)}</span>
-          <span className={`status ${data.task.status}`}>{label(data.task.status)}</span>
+          <span className="round-badge">{label(detailData.task.contentType)}</span>
+          <span className={`status ${detailData.task.status}`}>{label(detailData.task.status)}</span>
         </div>
       </section>
-      <ReviewFlowRail status={data.task.status} />
+      <ReviewFlowRail status={detailData.task.status} />
       {(loadError || error) && <div className="error">{loadError || error}</div>}
       {aiReviewing && <AiReviewProgressPanel minutes={reviewAgeMinutes} onRefresh={reload} />}
       <section className="review-layout">
@@ -1210,7 +1235,7 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
           </div>
         </div>
         <aside className="review-sidebar">
-          <ScorePanel result={result} status={data.task.status} issues={issues} />
+          <ScorePanel result={result} status={detailData.task.status} issues={issues} />
           {workflowActions}
           <section className="panel review-list-panel">
             <div className="panel-head"><h3>{t("Evidence and issues")}</h3><span>{filteredIssues.length}/{issues.length}</span></div>
@@ -1223,9 +1248,9 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
           </section>
         </aside>
         <section className="panel log-panel review-log-panel">
-          <div className="panel-head"><h3>{t("Supporting history")}</h3><span>{data.logs.length}</span></div>
+          <div className="panel-head"><h3>{t("Supporting history")}</h3><span>{detailData.logs.length}</span></div>
           <div className="log-grid">
-            {data.logs.map((log) => <div className="log" key={log.id}>{dynamic(log.action)}<span>{new Date(log.createdAt).toLocaleString()}</span></div>)}
+            {detailData.logs.map((log) => <div className="log" key={log.id}>{dynamic(log.action)}<span>{new Date(log.createdAt).toLocaleString()}</span></div>)}
           </div>
         </section>
       </section>
@@ -1665,18 +1690,29 @@ function useApi<T>(url: string, session: Session, fallback: T) {
   const [data, setData] = useState<T>(fallback);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const reload = async () => {
+  const requestIdRef = useRef(0);
+  const fallbackRef = useRef(fallback);
+  fallbackRef.current = fallback;
+  const reload = React.useCallback(async () => {
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
     setLoading(true);
     setError("");
     try {
-      setData(await api<T>(url, session));
+      const nextData = await api<T>(url, session);
+      if (requestId === requestIdRef.current) setData(nextData);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "请求失败");
+      if (requestId === requestIdRef.current) {
+        setData(fallbackRef.current);
+        setError(err instanceof Error ? err.message : "请求失败");
+      }
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) setLoading(false);
     }
-  };
-  useEffect(() => { reload(); }, [url]);
+  }, [url, session]);
+  useEffect(() => {
+    reload();
+  }, [reload]);
   return { data, loading, error, reload };
 }
 

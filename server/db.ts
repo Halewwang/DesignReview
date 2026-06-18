@@ -18,6 +18,7 @@ export type Database = {
 const storeKey = "reviews";
 let schemaReadyForUrl: string | undefined;
 let cachedSql: { url: string; sql: Sql } | undefined;
+let mutationQueue: Promise<unknown> = Promise.resolve();
 const postgresTimeoutMs = 8000;
 
 export const createEmptyDb = (): Database => ({
@@ -163,9 +164,14 @@ async function withPostgresTimeout<T>(operation: Promise<T>): Promise<T> {
 }
 
 export async function mutateDb<T>(mutator: (db: Database) => T | Promise<T>): Promise<T> {
-  const db = await readDb();
-  const result = await mutator(db);
-  await writeDb(db);
+  const runMutation = async () => {
+    const db = await readDb();
+    const result = await mutator(db);
+    await writeDb(db);
+    return result;
+  };
+  const result = mutationQueue.then(runMutation, runMutation);
+  mutationQueue = result.catch(() => undefined);
   return result;
 }
 

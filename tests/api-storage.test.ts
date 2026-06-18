@@ -1,9 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { app } from "../server/index";
+import { app, drainAiReviewJobsForTest } from "../server/index";
 import { createEmptyDb, getStorageMode, mutateDb, readDb } from "../server/db";
 
 const designerHeaders = {
@@ -27,6 +27,14 @@ beforeEach(() => {
   delete process.env.VERCEL;
   delete process.env.AI_PROVIDER_API_KEY;
   delete process.env.OPENAI_API_KEY;
+  delete process.env.AI_REVIEW_DISABLE_BACKGROUND;
+  delete process.env.AI_REVIEW_BACKGROUND_DELAY_MS;
+});
+
+afterEach(async () => {
+  await drainAiReviewJobsForTest();
+  delete process.env.AI_REVIEW_DISABLE_BACKGROUND;
+  delete process.env.AI_REVIEW_BACKGROUND_DELAY_MS;
 });
 
 describe("API validation and health", () => {
@@ -90,7 +98,9 @@ describe("API validation and health", () => {
     else delete process.env.MAX_FRAMES_PER_TASK;
   });
 
-  it("creates an upload-based review with selected image frames and AI result", async () => {
+  it("creates an upload-based review as a durable in-progress task with selected image frames", async () => {
+    process.env.AI_REVIEW_DISABLE_BACKGROUND = "1";
+
     const response = await request(app)
       .post("/api/reviews/upload-images")
       .set(designerHeaders)
@@ -114,11 +124,12 @@ describe("API validation and health", () => {
         ]
       });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(202);
+    expect(response.body.accepted).toBe(true);
     expect(response.body.task).toMatchObject({
       title: "Upload review",
       source: "upload",
-      status: expect.stringMatching(/approved|needs_revision/)
+      status: "ai_reviewing"
     });
     expect(response.body.task).not.toHaveProperty("figmaUrl");
     expect(response.body.frames).toHaveLength(2);
@@ -133,11 +144,68 @@ describe("API validation and health", () => {
         })
       ])
     );
-    expect(response.body.result.totalScore).toEqual(expect.any(Number));
+    expect(response.body).not.toHaveProperty("result");
 
     const db = await readDb();
     expect(db.tasks[0]).toMatchObject({ id: response.body.task.id, source: "upload" });
     expect(db.frames.filter((frame) => frame.taskId === response.body.task.id)).toHaveLength(2);
+    expect(db.results.filter((result) => result.taskId === response.body.task.id)).toHaveLength(0);
+
+    const detail = await request(app).get(`/api/reviews/${response.body.task.id}`).set(designerHeaders);
+    expect(detail.status).toBe(200);
+    expect(detail.body.task.status).toBe("ai_reviewing");
+    expect(detail.body.frames).toHaveLength(2);
+    expect(detail.body.results).toHaveLength(0);
+  });
+
+  it("starts selected Frame AI review as a durable in-progress task before the model finishes", async () => {
+    process.env.AI_REVIEW_DISABLE_BACKGROUND = "1";
+
+    await mutateDb((db) => {
+      db.tasks.push({
+        id: "task_async_frame",
+        title: "Async frame review",
+        contentType: "官网 Banner",
+        description: "",
+        source: "upload",
+        status: "frame_selection",
+        priority: "普通",
+        submitterName: "Hale",
+        submitterId: "Hale",
+        submitterRole: "设计师",
+        createdAt: "2026-06-18T00:00:00.000Z",
+        updatedAt: "2026-06-18T00:00:00.000Z",
+        submissionRound: 1
+      });
+      db.frames.push({
+        id: "frame_async_review",
+        taskId: "task_async_frame",
+        figmaNodeId: "upload_1",
+        pageName: "上传图片",
+        frameName: "hero.png",
+        width: 0,
+        height: 0,
+        thumbnailUrl: "data:image/png;base64,iVBORw0KGgo=",
+        exportedImageUrl: "data:image/png;base64,iVBORw0KGgo=",
+        selected: true,
+        sortOrder: 0
+      });
+    });
+
+    const response = await request(app)
+      .post("/api/reviews/task_async_frame/start-ai-review")
+      .set(designerHeaders)
+      .send({});
+
+    expect(response.status).toBe(202);
+    expect(response.body.accepted).toBe(true);
+    expect(response.body.task).toMatchObject({ id: "task_async_frame", status: "ai_reviewing" });
+    expect(response.body).not.toHaveProperty("result");
+
+    const detail = await request(app).get("/api/reviews/task_async_frame").set(designerHeaders);
+    expect(detail.status).toBe(200);
+    expect(detail.body.task.status).toBe("ai_reviewing");
+    expect(detail.body.results).toHaveLength(0);
   });
 
   it("marks stale AI reviews as failed when the queue is read", async () => {
@@ -205,9 +273,14 @@ describe("API validation and health", () => {
       .set(designerHeaders)
       .send({});
 
-    expect(response.status).toBe(200);
-    expect(response.body.task.status).toEqual(expect.stringMatching(/approved|needs_revision/));
-    expect(response.body.result.totalScore).toEqual(expect.any(Number));
+    expect(response.status).toBe(202);
+    expect(response.body.task.status).toBe("ai_reviewing");
+    expect(response.body.accepted).toBe(true);
+
+    await drainAiReviewJobsForTest();
+    const detail = await request(app).get("/api/reviews/task_upload_retry").set(designerHeaders);
+    expect(detail.body.task.status).toEqual(expect.stringMatching(/approved|needs_revision/));
+    expect(detail.body.results.at(-1).totalScore).toEqual(expect.any(Number));
   });
 
   it("rejects upload-based reviews with more than nine images", async () => {
@@ -247,7 +320,11 @@ describe("API validation and health", () => {
       });
 
     const taskId = createResponse.body.task.id;
-    expect(createResponse.body.task.status).toBe("needs_revision");
+    expect(createResponse.status).toBe(202);
+    expect(createResponse.body.task.status).toBe("ai_reviewing");
+    await drainAiReviewJobsForTest();
+    const createdDetail = await request(app).get(`/api/reviews/${taskId}`).set(designerHeaders);
+    expect(createdDetail.body.task.status).toBe("needs_revision");
 
     const response = await request(app)
       .post(`/api/reviews/${taskId}/resubmit`)
@@ -262,12 +339,12 @@ describe("API validation and health", () => {
         ]
       });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(202);
     expect(response.body.task).toMatchObject({
       id: taskId,
       source: "upload",
       submissionRound: 2,
-      status: expect.stringMatching(/approved|needs_revision/)
+      status: "ai_reviewing"
     });
     expect(response.body.frames).toHaveLength(1);
     expect(response.body.frames[0]).toMatchObject({
@@ -276,8 +353,9 @@ describe("API validation and health", () => {
       selected: true,
       exportedImageUrl: "data:image/jpeg;base64,/9j/4AAQSkZJRg=="
     });
-    expect(response.body.result.submissionRound).toBe(2);
+    expect(response.body).not.toHaveProperty("result");
 
+    await drainAiReviewJobsForTest();
     const db = await readDb();
     expect(db.results.filter((result) => result.taskId === taskId).map((result) => result.submissionRound)).toEqual([1, 2]);
     expect(db.frames.filter((frame) => frame.taskId === taskId).map((frame) => frame.frameName)).toEqual(["round-2.jpg"]);
@@ -454,6 +532,55 @@ describe("storage adapter", () => {
     const db = await readDb();
 
     expect(db.logs.map((log) => log.id)).toEqual(["log_1"]);
+  });
+
+  it("serializes overlapping mutations so stale background writes cannot resurrect deleted tasks", async () => {
+    await mutateDb((db) => {
+      Object.assign(db, createEmptyDb());
+      db.tasks.push({
+        id: "task_race_delete",
+        title: "Race delete",
+        contentType: "官网 Banner",
+        description: "",
+        source: "upload",
+        status: "ai_reviewing",
+        priority: "普通",
+        submitterName: "Hale",
+        submitterId: "Hale",
+        submitterRole: "设计师",
+        createdAt: "2026-06-18T00:00:00.000Z",
+        updatedAt: "2026-06-18T00:00:00.000Z",
+        submissionRound: 1
+      });
+    });
+
+    let releaseSlowWrite!: () => void;
+    let slowWriteStarted!: () => void;
+    const slowWriteEntered = new Promise<void>((resolve) => {
+      slowWriteStarted = resolve;
+    });
+    const slowWriteCanFinish = new Promise<void>((resolve) => {
+      releaseSlowWrite = resolve;
+    });
+    const slowWrite = mutateDb(async (db) => {
+      slowWriteStarted();
+      db.logs.push({ id: "log_background", taskId: "task_race_delete", actorName: "System", actorRole: "管理员", action: "background write", createdAt: "2026-06-18T00:00:01.000Z" });
+      await slowWriteCanFinish;
+    });
+
+    await slowWriteEntered;
+    const deleteWrite = mutateDb((db) => {
+      db.tasks = db.tasks.filter((task) => task.id !== "task_race_delete");
+      db.logs = db.logs.filter((log) => log.taskId !== "task_race_delete");
+    });
+
+    await Promise.race([deleteWrite, new Promise((resolve) => setTimeout(resolve, 20))]);
+    releaseSlowWrite();
+    await Promise.all([slowWrite, deleteWrite]);
+    const db = await readDb();
+
+    expect(db.tasks.some((task) => task.id === "task_race_delete")).toBe(false);
+    expect(db.logs.some((log) => log.taskId === "task_race_delete")).toBe(false);
   });
 
   it("uses a writable tmp JSON store on Vercel when Postgres is not configured", async () => {
