@@ -62,6 +62,16 @@ describe("API validation and health", () => {
     expect((await request(app).get("/api/reviews").set(authorization)).status).toBe(401);
   });
 
+  it("issues an operations session with the standard access code", async () => {
+    const response = await request(app)
+      .post("/api/access")
+      .send({ accessCode: "emke.de", role: "运营", name: "Ops" });
+
+    expect(response.status).toBe(200);
+    expect(response.body.session).toMatchObject({ role: "运营", name: "Ops", userId: "Ops" });
+    expect(response.body.session.token).toEqual(expect.any(String));
+  });
+
   it("does not trust actor role headers when legacy test auth is disabled", async () => {
     process.env.REVIEW_ALLOW_LEGACY_HEADER_AUTH = "0";
 

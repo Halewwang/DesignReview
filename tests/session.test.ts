@@ -32,13 +32,26 @@ describe("stored session", () => {
     });
   });
 
+  it("accepts an operations session", () => {
+    expect(normalizeStoredSession({
+      token: "operations-token",
+      role: "运营",
+      name: "Ops",
+      userId: "Ops"
+    })).toMatchObject({ role: "运营", name: "Ops", userId: "Ops" });
+  });
+
   it("rejects malformed stored sessions instead of crashing app startup", () => {
-    expect(normalizeStoredSession({ role: "运营", name: "Legacy" })).toBeNull();
+    expect(normalizeStoredSession({ role: "设计总监", name: "Legacy" })).toBeNull();
     expect(normalizeStoredSession("broken")).toBeNull();
   });
 
   it("does not carry the designer code into an administrator login", () => {
     expect(accessCodeForRoleSelection("管理员", "emke.de")).toBe("");
     expect(accessCodeForRoleSelection("设计师", "emke.de")).toBe("emke.de");
+  });
+
+  it("uses the standard access code when operations is selected", () => {
+    expect(accessCodeForRoleSelection("运营", "emke.de")).toBe("emke.de");
   });
 });

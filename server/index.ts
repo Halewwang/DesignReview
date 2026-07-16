@@ -58,6 +58,8 @@ function expectedAccessCode(role: Role) {
   return process.env.VERCEL === "1" ? undefined : accessCode;
 }
 
+const loginRoles: Role[] = ["设计师", "运营", "管理员"];
+
 async function requireAccess(req: express.Request, res: express.Response, next: express.NextFunction) {
   if (req.path === "/api/access" || req.path === "/api/health") return next();
   const token = bearerToken(req);
@@ -85,7 +87,7 @@ app.post("/api/access", async (req, res) => {
   const role = req.body?.role as Role;
   const name = String(req.body?.name ?? "").trim();
   const expectedCode = expectedAccessCode(role);
-  if (!(["设计师", "管理员"] as Role[]).includes(role) || !name || !expectedCode || req.body?.accessCode !== expectedCode) {
+  if (!loginRoles.includes(role) || !name || !expectedCode || req.body?.accessCode !== expectedCode) {
     const error = role === "管理员"
       ? expectedCode ? "管理员访问口令错误" : "管理员访问口令未配置"
       : "访问口令错误";
@@ -101,7 +103,7 @@ app.post("/api/access", async (req, res) => {
       db.sessions.push({
         id: uid("session"),
         tokenHash: hashSessionToken(token),
-        role: role as "设计师" | "管理员",
+        role,
         name,
         userId,
         createdAt,

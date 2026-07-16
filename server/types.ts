@@ -151,7 +151,7 @@ export type AuditLog = {
 export type ReviewSession = {
   id: string;
   tokenHash: string;
-  role: "设计师" | "管理员";
+  role: "设计师" | "运营" | "管理员";
   name: string;
   userId: string;
   createdAt: string;
