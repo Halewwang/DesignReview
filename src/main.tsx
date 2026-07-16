@@ -20,7 +20,7 @@ import "./styles.css";
 import { formatDeductionItem } from "./shared/aiDisplay";
 import { encodeHeaderValue } from "./shared/headerEncoding";
 import { defaultTaskFilters, filterIssues, filterTasks, IssueFilters, TaskFilters } from "./shared/filters";
-import { dashboardCommandCenter, normalizeStoredReviewNavigation, reviewTimeline, selectReviewRoundData, type ReviewAppView, type ReviewTimelineStageState } from "./shared/reviewFlow";
+import { dashboardCommandCenter, normalizeStoredReviewNavigation, reviewTimeline, runAiReviewJobIfAllowed, selectReviewRoundData, submitOperationReviewDraft, type ReviewAppView, type ReviewTimelineStageState } from "./shared/reviewFlow";
 import { scoreTone } from "./shared/scoreDisplay";
 import { detectPreferredLanguage, hasHanText, languageLabel, localizeDynamicText, type Language } from "./shared/i18n";
 import { localizedArrayItem, reviewText } from "./shared/localizedReviewText";
@@ -1154,14 +1154,19 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
     return () => window.clearInterval(timer);
   }, [aiReviewing, reload]);
   useEffect(() => {
-    if (!aiReviewing || !reviewJob) return;
-    const leaseExpired = reviewJob.status === "running" && (!reviewJob.leaseExpiresAt || Date.parse(reviewJob.leaseExpiresAt) <= Date.now());
-    if (reviewJob.status !== "queued" && !leaseExpired) return;
+    if (!reviewJob) return;
     const runKey = `${reviewJob.id}:${reviewJob.attempt}`;
     if (runningJobRef.current === runKey) return;
-    runningJobRef.current = runKey;
-    api(`/api/reviews/${taskId}/run-ai-review`, session, { method: "POST" })
-      .then(() => reload())
+    runAiReviewJobIfAllowed({
+      role: session.role,
+      aiReviewing,
+      job: reviewJob,
+      run: async () => {
+        runningJobRef.current = runKey;
+        await api(`/api/reviews/${taskId}/run-ai-review`, session, { method: "POST" });
+      }
+    })
+      .then((started) => { if (started) reload(); })
       .catch((err) => setError(err instanceof Error ? err.message : t("AI pre-review failed")))
       .finally(() => {
         if (runningJobRef.current === runKey) runningJobRef.current = "";
@@ -1240,27 +1245,18 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
 
   async function submitOperationReview(event: FormEvent) {
     event.preventDefault();
-    if (!operationDraft.comment.trim()) {
-      setError(t("Enter an operations supplemental review"));
-      return;
-    }
-    setError("");
-    setOperationBusy(true);
-    try {
-      await api(`/api/reviews/${taskId}/operation-review`, session, {
-        method: "POST",
-        body: {
-          focus: operationDraft.focus.trim(),
-          comment: operationDraft.comment.trim()
-        }
-      });
-      setOperationDraft({ focus: "", comment: "" });
-      reload();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("Operations review failed"));
-    } finally {
-      setOperationBusy(false);
-    }
+    await submitOperationReviewDraft({
+      draft: operationDraft,
+      post: (body) => api(`/api/reviews/${taskId}/operation-review`, session, { method: "POST", body }),
+      reload,
+      onDraftChange: setOperationDraft,
+      onError: setError,
+      onBusyChange: setOperationBusy,
+      messages: {
+        emptyComment: t("Enter an operations supplemental review"),
+        failed: t("Operations review failed")
+      }
+    });
   }
 
   async function withdrawTask() {

@@ -1,3 +1,5 @@
+import type { ClientRole } from "./session";
+
 export type ReviewFlowStatus =
   | "draft"
   | "figma_reading"
@@ -41,6 +43,16 @@ export type ReviewNavigationState = {
 
 export type ReviewRoundRecord = {
   submissionRound?: number;
+};
+
+export type AutoRunnableReviewJob = {
+  status: string;
+  leaseExpiresAt?: string;
+};
+
+export type OperationReviewDraft = {
+  focus: string;
+  comment: string;
 };
 
 const actionStatuses = new Set(["draft", "frame_selection", "figma_read_failed", "ai_review_failed"]);
@@ -127,6 +139,64 @@ export function selectReviewRoundData<TResult extends ReviewRoundRecord, TIssue 
     result: results.filter((result) => (result.submissionRound ?? fallbackRound) === currentRound).at(-1),
     issues: issues.filter((issue) => (issue.submissionRound ?? fallbackRound) === currentRound)
   };
+}
+
+export async function runAiReviewJobIfAllowed({
+  role,
+  aiReviewing,
+  job,
+  run,
+  now = Date.now()
+}: {
+  role: ClientRole;
+  aiReviewing: boolean;
+  job?: AutoRunnableReviewJob;
+  run: () => Promise<void>;
+  now?: number;
+}) {
+  if (role === "运营" || !aiReviewing || !job) return false;
+  const leaseExpired = job.status === "running" && (!job.leaseExpiresAt || Date.parse(job.leaseExpiresAt) <= now);
+  if (job.status !== "queued" && !leaseExpired) return false;
+  await run();
+  return true;
+}
+
+export async function submitOperationReviewDraft({
+  draft,
+  post,
+  reload,
+  onDraftChange,
+  onError,
+  onBusyChange,
+  messages
+}: {
+  draft: OperationReviewDraft;
+  post: (payload: OperationReviewDraft) => Promise<void>;
+  reload: () => void;
+  onDraftChange: (draft: OperationReviewDraft) => void;
+  onError: (message: string) => void;
+  onBusyChange: (busy: boolean) => void;
+  messages: { emptyComment: string; failed: string };
+}) {
+  const payload = {
+    focus: draft.focus.trim(),
+    comment: draft.comment.trim()
+  };
+  if (!payload.comment) {
+    onError(messages.emptyComment);
+    return;
+  }
+  onError("");
+  onBusyChange(true);
+  try {
+    await post(payload);
+    onDraftChange({ focus: "", comment: "" });
+    reload();
+  } catch (error) {
+    onError(error instanceof Error ? error.message : messages.failed);
+  } finally {
+    onBusyChange(false);
+  }
 }
 
 const timelineKeys: ReviewTimelineStageKey[] = ["intake", "ai_review", "ai_decision", "revision", "approved"];
