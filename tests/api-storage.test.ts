@@ -17,6 +17,41 @@ const adminHeaders = {
   "x-actor-role": encodeURIComponent("管理员")
 };
 
+async function issueSession(role: "设计师" | "运营" | "管理员", name: string) {
+  const response = await request(app)
+    .post("/api/access")
+    .send({ accessCode: "emke.de", role, name });
+
+  expect(response.status).toBe(200);
+  return response.body.session.token as string;
+}
+
+async function seedOperationReviewTask() {
+  await mutateDb((db) => {
+    const sessions = db.sessions;
+    Object.assign(db, createEmptyDb());
+    db.sessions = sessions;
+    db.tasks.push({
+      id: "task_ops_review",
+      title: "Operations supplemental review",
+      contentType: "官网 Banner",
+      description: "Stable workflow state",
+      source: "upload",
+      status: "needs_revision",
+      priority: "加急",
+      submitterName: "Hale",
+      submitterId: "EMKE-Hale",
+      submitterRole: "设计师",
+      aiTotalScore: 72,
+      finalDecision: "退回",
+      finalReason: "等待补充评价",
+      createdAt: "2026-07-16T00:00:00.000Z",
+      updatedAt: "2026-07-16T01:00:00.000Z",
+      submissionRound: 2
+    });
+  });
+}
+
 beforeEach(() => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "emke-api-storage-"));
   process.env.REVIEWS_DB_PATH = path.join(tempDir, "reviews.json");
@@ -573,18 +608,95 @@ describe("API validation and health", () => {
     expect(task).toMatchObject({ status: "needs_revision", submissionRound: 1 });
   });
 
-  it("keeps retired human review endpoints explicit for legacy clients", async () => {
-    const operationResponse = await request(app)
-      .post("/api/reviews/task_legacy/operation-review")
-      .set(designerHeaders)
-      .send({});
+  it("appends operations reviews without changing task workflow state", async () => {
+    process.env.REVIEW_ALLOW_LEGACY_HEADER_AUTH = "0";
+    const operationsToken = await issueSession("运营", "Ops");
+    await seedOperationReviewTask();
+    const before = structuredClone((await readDb()).tasks.find((task) => task.id === "task_ops_review"));
+
+    const first = await request(app)
+      .post("/api/reviews/task_ops_review/operation-review")
+      .set("Authorization", `Bearer ${operationsToken}`)
+      .send({ focus: "渠道表达", comment: "补充检查移动端首屏卖点。" });
+    const second = await request(app)
+      .post("/api/reviews/task_ops_review/operation-review")
+      .set("Authorization", `Bearer ${operationsToken}`)
+      .send({ comment: "同时核对活动时间。" });
+
+    const db = await readDb();
+    const after = db.tasks.find((task) => task.id === "task_ops_review");
+    const reviews = db.operationReviews.filter((review) => review.taskId === "task_ops_review");
+    const logs = db.logs.filter((entry) => entry.taskId === "task_ops_review");
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(first.body).toMatchObject({
+      taskId: "task_ops_review",
+      submissionRound: 2,
+      reviewerName: "Ops",
+      focus: "渠道表达",
+      comment: "补充检查移动端首屏卖点。"
+    });
+    expect(reviews).toHaveLength(2);
+    expect(reviews[0]).toMatchObject({ submissionRound: 2, reviewerName: "Ops", focus: "渠道表达" });
+    expect(reviews[1]).toMatchObject({ submissionRound: 2, reviewerName: "Ops", focus: "" });
+    expect(logs).toHaveLength(2);
+    expect(logs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ actorName: "Ops", actorRole: "运营", action: "提交运营补充评价" })
+    ]));
+    expect(after).toEqual(before);
+  });
+
+  it("rejects empty operations review comments", async () => {
+    process.env.REVIEW_ALLOW_LEGACY_HEADER_AUTH = "0";
+    const operationsToken = await issueSession("运营", "Ops");
+    await seedOperationReviewTask();
+
+    const response = await request(app)
+      .post("/api/reviews/task_ops_review/operation-review")
+      .set("Authorization", `Bearer ${operationsToken}`)
+      .send({ comment: "   " });
+
+    expect(response.status).toBe(400);
+    expect((await readDb()).operationReviews).toHaveLength(0);
+  });
+
+  it("rejects designer and administrator operations reviews", async () => {
+    process.env.REVIEW_ALLOW_LEGACY_HEADER_AUTH = "0";
+    const designerToken = await issueSession("设计师", "Hale");
+    const adminToken = await issueSession("管理员", "Admin");
+    await seedOperationReviewTask();
+
+    for (const token of [designerToken, adminToken]) {
+      const response = await request(app)
+        .post("/api/reviews/task_ops_review/operation-review")
+        .set("Authorization", `Bearer ${token}`)
+        .send({ comment: "不应写入" });
+      expect(response.status).toBe(403);
+    }
+
+    expect((await readDb()).operationReviews).toHaveLength(0);
+  });
+
+  it("rejects operations reviews for missing tasks", async () => {
+    process.env.REVIEW_ALLOW_LEGACY_HEADER_AUTH = "0";
+    const operationsToken = await issueSession("运营", "Ops");
+
+    const response = await request(app)
+      .post("/api/reviews/task_missing/operation-review")
+      .set("Authorization", `Bearer ${operationsToken}`)
+      .send({ comment: "任务应存在" });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toBe("任务不存在");
+  });
+
+  it("keeps the retired director review endpoint explicit for legacy clients", async () => {
     const directorResponse = await request(app)
       .post("/api/reviews/task_legacy/director-decision")
       .set(designerHeaders)
       .send({});
 
-    expect(operationResponse.status).toBe(410);
-    expect(operationResponse.body.error).toContain("AI 审核直接给出结论");
     expect(directorResponse.status).toBe(410);
     expect(directorResponse.body.error).toContain("AI 审核直接给出结论");
   });
