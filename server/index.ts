@@ -58,7 +58,12 @@ function expectedAccessCode(role: Role) {
   return process.env.VERCEL === "1" ? undefined : accessCode;
 }
 
-const loginRoles: Role[] = ["设计师", "运营", "管理员"];
+type LoginRole = "设计师" | "运营" | "管理员";
+const loginRoles: LoginRole[] = ["设计师", "运营", "管理员"];
+
+function isLoginRole(value: unknown): value is LoginRole {
+  return loginRoles.some((role) => role === value);
+}
 
 async function requireAccess(req: express.Request, res: express.Response, next: express.NextFunction) {
   if (req.path === "/api/access" || req.path === "/api/health") return next();
@@ -84,10 +89,11 @@ async function log(taskId: string | undefined, req: express.Request, action: str
 app.use(requireAccess);
 
 app.post("/api/access", async (req, res) => {
-  const role = req.body?.role as Role;
+  const requestedRole = req.body?.role;
+  const role = isLoginRole(requestedRole) ? requestedRole : undefined;
   const name = String(req.body?.name ?? "").trim();
-  const expectedCode = expectedAccessCode(role);
-  if (!loginRoles.includes(role) || !name || !expectedCode || req.body?.accessCode !== expectedCode) {
+  const expectedCode = role ? expectedAccessCode(role) : undefined;
+  if (!role || !name || !expectedCode || req.body?.accessCode !== expectedCode) {
     const error = role === "管理员"
       ? expectedCode ? "管理员访问口令错误" : "管理员访问口令未配置"
       : "访问口令错误";
