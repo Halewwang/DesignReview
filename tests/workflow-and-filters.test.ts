@@ -97,6 +97,18 @@ describe("workflow guards", () => {
 
     expect(canViewTask("设计师", task, "Shared Name")).toBe(false);
   });
+
+  it("falls back to the submitter name when the canonical submitter ID is absent", () => {
+    const task = { submitterName: "Legacy Hale" };
+
+    expect(canViewTask("设计师", task, "Legacy Hale")).toBe(true);
+  });
+
+  it("falls back to the submitter name when the canonical submitter ID is blank", () => {
+    const task = { submitterId: "   ", submitterName: "Legacy Hale" };
+
+    expect(canViewTask("设计师", task, "Legacy Hale")).toBe(true);
+  });
 });
 
 describe("AI schema validation", () => {

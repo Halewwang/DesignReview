@@ -53,7 +53,8 @@ export function canViewTask(
   if (currentRole === "运营" || currentRole === "管理员") return true;
   if (currentRole !== "设计师") return false;
   const actor = normalizeActor(actorIdentity);
-  const ownerIdentity = normalizeActor(task.submitterId ?? task.submitterName);
+  const submitterId = normalizeActor(task.submitterId);
+  const ownerIdentity = submitterId || normalizeActor(task.submitterName);
   return Boolean(actor && ownerIdentity === actor);
 }
 
