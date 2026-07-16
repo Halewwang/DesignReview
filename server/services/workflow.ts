@@ -38,16 +38,20 @@ export function canWithdrawTaskStatus(status: ReviewStatus) {
 }
 
 export function canDeleteTaskStatus(status: ReviewStatus) {
-  return ["draft", "figma_reading", "frame_selection", "ai_reviewing", "needs_revision", "resubmitted", "approved", "figma_read_failed", "ai_review_failed", "archived"].includes(status);
+  return ["draft", "figma_reading", "frame_selection", "ai_reviewing", "needs_revision", "resubmitted", "approved", "figma_read_failed", "ai_review_failed", "archived", "withdrawn"].includes(status);
 }
 
 export function assertCanDeleteTask(currentRole: Role, task: { submitterId?: string; submitterName?: string }, actorName: string) {
+  assertTaskPermission(currentRole, task, actorName, "删除");
+}
+
+export function assertTaskPermission(currentRole: Role, task: { submitterId?: string; submitterName?: string }, actorIdentity: string, action: string) {
   if (currentRole === "管理员") return;
-  if (currentRole !== "设计师") throw new Error("当前身份无权删除任务");
-  const actor = normalizeActor(actorName);
+  if (currentRole !== "设计师") throw new Error(`当前身份无权${action}任务`);
+  const actor = normalizeActor(actorIdentity);
   const ownerIds = [task.submitterId, task.submitterName].map(normalizeActor).filter(Boolean);
   if (!actor || !ownerIds.includes(actor)) {
-    throw new Error("当前身份无权删除他人任务");
+    throw new Error(`当前身份无权${action}他人任务`);
   }
 }
 

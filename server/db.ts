@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import postgres from "postgres";
 import type { Sql } from "postgres";
-import { AuditLog, DirectorDecision, OperationReview, ReviewFrame, ReviewIssue, ReviewResult, ReviewTask } from "./types.js";
+import { AuditLog, DirectorDecision, OperationReview, ReviewFrame, ReviewIssue, ReviewJob, ReviewResult, ReviewSession, ReviewTask } from "./types.js";
 
 export type Database = {
   tasks: ReviewTask[];
@@ -13,6 +13,8 @@ export type Database = {
   operationReviews: OperationReview[];
   directorDecisions: DirectorDecision[];
   logs: AuditLog[];
+  sessions: ReviewSession[];
+  jobs: ReviewJob[];
 };
 
 const storeKey = "reviews";
@@ -28,7 +30,9 @@ export const createEmptyDb = (): Database => ({
   issues: [],
   operationReviews: [],
   directorDecisions: [],
-  logs: []
+  logs: [],
+  sessions: [],
+  jobs: []
 });
 
 export function uid(prefix: string) {
@@ -41,6 +45,10 @@ export function now() {
 
 export function getStorageMode() {
   return databaseUrl() ? "postgres" : "json";
+}
+
+export function isDurableStorage() {
+  return getStorageMode() === "postgres" || process.env.VERCEL !== "1";
 }
 
 function databaseUrl() {
@@ -130,6 +138,7 @@ export async function readStoreValue<T>(key: string): Promise<T | undefined> {
 }
 
 export async function writeStoreValue(key: string, value: unknown) {
+  assertDurableMutationStorage();
   const url = databaseUrl();
   if (url) {
     await ensurePostgresSchema(url);
@@ -164,6 +173,25 @@ async function withPostgresTimeout<T>(operation: Promise<T>): Promise<T> {
 }
 
 export async function mutateDb<T>(mutator: (db: Database) => T | Promise<T>): Promise<T> {
+  assertDurableMutationStorage();
+  const url = databaseUrl();
+  if (url) {
+    await ensurePostgresSchema(url);
+    const sql = getPostgresClient(url);
+    const transactionResult = await withPostgresTimeout(sql.begin(async (transactionSql) => {
+      await transactionSql`select pg_advisory_xact_lock(hashtext(${storeKey}))`;
+      const rows = await transactionSql`select value from emke_design_review_store where key = ${storeKey} limit 1 for update`;
+      const db = normalizeDb(rows[0]?.value);
+      const result = await mutator(db);
+      await transactionSql`
+        insert into emke_design_review_store (key, value, updated_at)
+        values (${storeKey}, ${transactionSql.json(normalizeDb(db) as postgres.JSONValue)}, now())
+        on conflict (key) do update set value = excluded.value, updated_at = now()
+      `;
+      return result;
+    }));
+    return transactionResult as T;
+  }
   const runMutation = async () => {
     const db = await readDb();
     const result = await mutator(db);
@@ -173,6 +201,12 @@ export async function mutateDb<T>(mutator: (db: Database) => T | Promise<T>): Pr
   const result = mutationQueue.then(runMutation, runMutation);
   mutationQueue = result.catch(() => undefined);
   return result;
+}
+
+function assertDurableMutationStorage() {
+  if (!isDurableStorage()) {
+    throw new Error("生产环境未配置持久数据库，已拒绝写入以避免审核任务丢失");
+  }
 }
 
 function normalizeDb(input: unknown): Database {
@@ -186,6 +220,8 @@ function normalizeDb(input: unknown): Database {
     issues: Array.isArray(db.issues) ? db.issues : [],
     operationReviews: Array.isArray(db.operationReviews) ? db.operationReviews : [],
     directorDecisions: Array.isArray(db.directorDecisions) ? db.directorDecisions : [],
-    logs: Array.isArray(db.logs) ? db.logs : []
+    logs: Array.isArray(db.logs) ? db.logs : [],
+    sessions: Array.isArray(db.sessions) ? db.sessions : [],
+    jobs: Array.isArray(db.jobs) ? db.jobs : []
   };
 }

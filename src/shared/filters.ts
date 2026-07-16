@@ -40,6 +40,10 @@ export type IssueFilters = {
   resolutionStatus?: string;
 };
 
+export function defaultTaskFilters(role: string): TaskFilters {
+  return { contentType: "", status: "", submitterId: "", keyword: "", onlyMine: role === "设计师" };
+}
+
 export function filterTasks<T extends TaskLike>(tasks: T[], filters: TaskFilters) {
   const keyword = normalize(filters.keyword);
   const submitterId = normalize(filters.submitterId);
@@ -58,7 +62,7 @@ export function filterTasks<T extends TaskLike>(tasks: T[], filters: TaskFilters
     } else if (filters.status === "reviewing") {
       if (!["figma_reading", "ai_reviewing", "resubmitted"].includes(task.status ?? "")) return false;
     } else if (filters.status === "closed") {
-      if (!["archived", "figma_read_failed", "ai_review_failed"].includes(task.status ?? "")) return false;
+      if (!["archived", "withdrawn", "voided", "figma_read_failed", "ai_review_failed"].includes(task.status ?? "")) return false;
     } else if (filters.status && task.status !== filters.status) return false;
     if (submitterId && !normalize(task.submitterId).includes(submitterId)) return false;
     if (filters.onlyMine) {
@@ -102,7 +106,7 @@ export function dashboardLanes<T extends TaskLike>(tasks: T[], currentUser: Pick
     { key: "reviewing", tasks: tasks.filter((task) => ["figma_reading", "ai_reviewing", "resubmitted"].includes(task.status ?? "")) },
     { key: "needs_revision", tasks: tasks.filter((task) => task.status === "needs_revision" && !isCurrentUserTask(task)) },
     { key: "approved", tasks: tasks.filter((task) => task.status === "approved") },
-    { key: "closed", tasks: tasks.filter((task) => task.status === "archived") }
+    { key: "closed", tasks: tasks.filter((task) => ["archived", "withdrawn", "voided"].includes(task.status ?? "")) }
   ];
 }
 

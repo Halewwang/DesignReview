@@ -7,6 +7,8 @@ export type ReviewFlowStatus =
   | "resubmitted"
   | "approved"
   | "archived"
+  | "withdrawn"
+  | "voided"
   | "figma_read_failed"
   | "ai_review_failed";
 
@@ -43,7 +45,7 @@ export type ReviewRoundRecord = {
 
 const actionStatuses = new Set(["draft", "frame_selection", "figma_read_failed", "ai_review_failed"]);
 const liveReviewStatuses = new Set(["figma_reading", "ai_reviewing", "resubmitted"]);
-const referenceStatuses = new Set(["approved", "archived"]);
+const referenceStatuses = new Set(["approved", "archived", "withdrawn", "voided"]);
 const reviewViews = new Set<ReviewAppView>(["dashboard", "new", "frames", "detail", "vis", "settings"]);
 
 export function dashboardCommandCenter<T extends ReviewFlowTask>(tasks: T[], currentUser: ReviewFlowUser) {
@@ -134,7 +136,7 @@ function timelineActiveIndex(status: string) {
   if (["ai_reviewing", "resubmitted"].includes(status)) return 1;
   if (status === "ai_review_failed") return 2;
   if (status === "needs_revision") return 3;
-  if (status === "approved" || status === "archived") return 4;
+  if (["approved", "archived", "withdrawn", "voided"].includes(status)) return 4;
   return 0;
 }
 

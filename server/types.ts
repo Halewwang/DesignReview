@@ -11,6 +11,8 @@ export type ReviewStatus =
   | "resubmitted"
   | "approved"
   | "archived"
+  | "withdrawn"
+  | "voided"
   | "figma_read_failed"
   | "ai_review_failed";
 
@@ -144,4 +146,34 @@ export type AuditLog = {
   actorRole: Role;
   action: string;
   createdAt: string;
+};
+
+export type ReviewSession = {
+  id: string;
+  tokenHash: string;
+  role: "设计师" | "管理员";
+  name: string;
+  userId: string;
+  createdAt: string;
+  expiresAt: string;
+};
+
+export type ReviewJobStage = "queued" | "preparing" | "exporting" | "analyzing" | "reporting" | "succeeded" | "failed" | "cancelled";
+
+export type ReviewJob = {
+  id: string;
+  taskId: string;
+  submissionRound: number;
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  stage: ReviewJobStage;
+  attempt: number;
+  actorName: string;
+  actorRole: Role;
+  actorId?: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  leaseExpiresAt?: string;
+  error?: string;
 };

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { app, drainAiReviewJobsForTest } from "../server/index";
-import { createEmptyDb, getStorageMode, mutateDb, readDb } from "../server/db";
+import { createEmptyDb, getStorageMode, isDurableStorage, mutateDb, readDb } from "../server/db";
 
 const designerHeaders = {
   "x-access-code": "emke.de",
@@ -29,6 +29,8 @@ beforeEach(() => {
   delete process.env.OPENAI_API_KEY;
   delete process.env.AI_REVIEW_DISABLE_BACKGROUND;
   delete process.env.AI_REVIEW_BACKGROUND_DELAY_MS;
+  delete process.env.REVIEW_ADMIN_ACCESS_CODE;
+  delete process.env.REVIEW_ALLOW_LEGACY_HEADER_AUTH;
 });
 
 afterEach(async () => {
@@ -38,13 +40,60 @@ afterEach(async () => {
 });
 
 describe("API validation and health", () => {
+  it("issues and revokes an opaque server-owned session", async () => {
+    process.env.REVIEW_ALLOW_LEGACY_HEADER_AUTH = "0";
+    const access = await request(app)
+      .post("/api/access")
+      .send({ accessCode: "emke.de", role: "设计师", name: "Hale" });
+
+    expect(access.status).toBe(200);
+    expect(access.body.session).toMatchObject({
+      token: expect.any(String),
+      role: "设计师",
+      name: "Hale",
+      userId: "Hale",
+      expiresAt: expect.any(String)
+    });
+    expect(access.body.session).not.toHaveProperty("accessCode");
+
+    const authorization = { Authorization: `Bearer ${access.body.session.token}` };
+    expect((await request(app).get("/api/reviews").set(authorization)).status).toBe(200);
+    expect((await request(app).delete("/api/session").set(authorization)).status).toBe(200);
+    expect((await request(app).get("/api/reviews").set(authorization)).status).toBe(401);
+  });
+
+  it("does not trust actor role headers when legacy test auth is disabled", async () => {
+    process.env.REVIEW_ALLOW_LEGACY_HEADER_AUTH = "0";
+
+    const response = await request(app).get("/api/settings").set(adminHeaders);
+
+    expect(response.status).toBe(401);
+  });
+
+  it("requires the separate administrator code when it is configured", async () => {
+    process.env.REVIEW_ALLOW_LEGACY_HEADER_AUTH = "0";
+    process.env.REVIEW_ADMIN_ACCESS_CODE = "admin-secret";
+
+    const rejected = await request(app)
+      .post("/api/access")
+      .send({ accessCode: "emke.de", role: "管理员", name: "Admin" });
+    const accepted = await request(app)
+      .post("/api/access")
+      .send({ accessCode: "admin-secret", role: "管理员", name: "Admin" });
+
+    expect(rejected.status).toBe(401);
+    expect(accepted.status).toBe(200);
+    expect(accepted.body.session).toMatchObject({ role: "管理员", name: "Admin" });
+  });
+
   it("reports API health with storage and provider readiness", async () => {
-    const response = await request(app).get("/api/health").set(designerHeaders);
+    const response = await request(app).get("/api/health");
 
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({
       ok: true,
       storageMode: getStorageMode(),
+      durableStorage: true,
       figmaTokenConfigured: expect.any(Boolean),
       aiKeyConfigured: expect.any(Boolean)
     });
@@ -150,12 +199,14 @@ describe("API validation and health", () => {
     expect(db.tasks[0]).toMatchObject({ id: response.body.task.id, source: "upload" });
     expect(db.frames.filter((frame) => frame.taskId === response.body.task.id)).toHaveLength(2);
     expect(db.results.filter((result) => result.taskId === response.body.task.id)).toHaveLength(0);
+    expect(db.jobs.find((job) => job.taskId === response.body.task.id)).toMatchObject({ status: "queued", stage: "queued", submissionRound: 1 });
 
     const detail = await request(app).get(`/api/reviews/${response.body.task.id}`).set(designerHeaders);
     expect(detail.status).toBe(200);
     expect(detail.body.task.status).toBe("ai_reviewing");
     expect(detail.body.frames).toHaveLength(2);
     expect(detail.body.results).toHaveLength(0);
+    expect(detail.body.job).toMatchObject({ status: "queued", stage: "queued" });
   });
 
   it("starts selected Frame AI review as a durable in-progress task before the model finishes", async () => {
@@ -206,6 +257,32 @@ describe("API validation and health", () => {
     expect(detail.status).toBe(200);
     expect(detail.body.task.status).toBe("ai_reviewing");
     expect(detail.body.results).toHaveLength(0);
+    expect(detail.body.job).toMatchObject({ taskId: "task_async_frame", status: "queued" });
+  });
+
+  it("runs a persisted AI job once and keeps its final stage readable", async () => {
+    process.env.AI_REVIEW_DISABLE_BACKGROUND = "1";
+    const created = await request(app)
+      .post("/api/reviews/upload-images")
+      .set(designerHeaders)
+      .send({
+        title: "Persisted job",
+        contentType: "官网 Banner",
+        images: [{ fileName: "hero.png", mimeType: "image/png", dataUrl: "data:image/png;base64,iVBORw0KGgo=" }]
+      });
+    const taskId = created.body.task.id;
+
+    const firstRun = await request(app).post(`/api/reviews/${taskId}/run-ai-review`).set(designerHeaders).send({});
+    const secondRun = await request(app).post(`/api/reviews/${taskId}/run-ai-review`).set(designerHeaders).send({});
+    const detail = await request(app).get(`/api/reviews/${taskId}`).set(designerHeaders);
+    const db = await readDb();
+
+    expect(firstRun.status).toBe(200);
+    expect(firstRun.body.job).toMatchObject({ status: "succeeded", stage: "succeeded", attempt: 1 });
+    expect(secondRun.status).toBe(202);
+    expect(secondRun.body).toMatchObject({ claimed: false, job: { status: "succeeded" } });
+    expect(detail.body.job).toMatchObject({ status: "succeeded", stage: "succeeded" });
+    expect(db.results.filter((result) => result.taskId === taskId)).toHaveLength(1);
   });
 
   it("marks stale AI reviews as failed when the queue is read", async () => {
@@ -234,6 +311,44 @@ describe("API validation and health", () => {
     expect(response.status).toBe(200);
     expect(task.status).toBe("ai_review_failed");
     expect(db.logs[0]).toMatchObject({ taskId: "task_stale", action: "AI 初审超时，请刷新后重新发起" });
+  });
+
+  it("keeps an old AI review resumable when it still has a persisted job", async () => {
+    await mutateDb((db) => {
+      db.tasks.push({
+        id: "task_resumable",
+        title: "Resumable review",
+        contentType: "官网 Banner",
+        description: "",
+        source: "upload",
+        status: "ai_reviewing",
+        priority: "普通",
+        submitterName: "Hale",
+        submitterId: "Hale",
+        submitterRole: "设计师",
+        createdAt: "2026-05-13T00:00:00.000Z",
+        updatedAt: "2026-05-13T00:00:00.000Z",
+        submissionRound: 1
+      });
+      db.jobs.push({
+        id: "job_resumable",
+        taskId: "task_resumable",
+        submissionRound: 1,
+        status: "queued",
+        stage: "queued",
+        attempt: 0,
+        actorName: "Hale",
+        actorRole: "设计师",
+        actorId: "Hale",
+        createdAt: "2026-05-13T00:00:00.000Z",
+        updatedAt: "2026-05-13T00:00:00.000Z"
+      });
+    });
+
+    const response = await request(app).get("/api/reviews").set(designerHeaders);
+
+    expect(response.body.find((item: any) => item.id === "task_resumable")?.status).toBe("ai_reviewing");
+    expect((await readDb()).jobs.find((job) => job.id === "job_resumable")?.status).toBe("queued");
   });
 
   it("retries failed upload-based AI reviews without requiring Figma data", async () => {
@@ -361,6 +476,32 @@ describe("API validation and health", () => {
     expect(db.frames.filter((frame) => frame.taskId === taskId).map((frame) => frame.frameName)).toEqual(["round-2.jpg"]);
   });
 
+  it("does not advance the round when upload resubmit validation fails", async () => {
+    await mutateDb((db) => {
+      db.tasks.push({
+        id: "task_atomic_resubmit",
+        title: "Atomic resubmit",
+        contentType: "官网 Banner",
+        description: "",
+        source: "upload",
+        status: "needs_revision",
+        priority: "普通",
+        submitterName: "Hale",
+        submitterId: "Hale",
+        submitterRole: "设计师",
+        createdAt: "2026-06-18T00:00:00.000Z",
+        updatedAt: "2026-06-18T00:00:00.000Z",
+        submissionRound: 1
+      });
+    });
+
+    const response = await request(app).post("/api/reviews/task_atomic_resubmit/resubmit").set(designerHeaders).send({ images: [] });
+    const task = (await readDb()).tasks.find((item) => item.id === "task_atomic_resubmit");
+
+    expect(response.status).toBe(400);
+    expect(task).toMatchObject({ status: "needs_revision", submissionRound: 1 });
+  });
+
   it("keeps retired human review endpoints explicit for legacy clients", async () => {
     const operationResponse = await request(app)
       .post("/api/reviews/task_legacy/operation-review")
@@ -377,7 +518,7 @@ describe("API validation and health", () => {
     expect(directorResponse.body.error).toContain("AI 审核直接给出结论");
   });
 
-  it("lets admins directly approve and archive a review task", async () => {
+  it("lets admins approve only reviewable failures with a recorded reason", async () => {
     await mutateDb((db) => {
       db.tasks.push({
         id: "task_admin_approve",
@@ -400,16 +541,21 @@ describe("API validation and health", () => {
     const designerResponse = await request(app)
       .post("/api/reviews/task_admin_approve/admin-approve")
       .set(designerHeaders)
+      .send({ reason: "人工复核确认可发布" });
+    const missingReasonResponse = await request(app)
+      .post("/api/reviews/task_admin_approve/admin-approve")
+      .set(adminHeaders)
       .send({});
     const adminResponse = await request(app)
       .post("/api/reviews/task_admin_approve/admin-approve")
       .set(adminHeaders)
-      .send({});
+      .send({ reason: "人工复核确认可发布" });
 
     expect(designerResponse.status).toBe(403);
     expect(designerResponse.body.error).toContain("无权通过归档");
+    expect(missingReasonResponse.status).toBe(400);
     expect(adminResponse.status).toBe(200);
-    expect(adminResponse.body).toMatchObject({ id: "task_admin_approve", status: "approved" });
+    expect(adminResponse.body).toMatchObject({ id: "task_admin_approve", status: "approved", finalReason: "人工复核确认可发布" });
 
     const db = await readDb();
     expect(db.tasks.find((task) => task.id === "task_admin_approve")?.status).toBe("approved");
@@ -417,11 +563,11 @@ describe("API validation and health", () => {
       taskId: "task_admin_approve",
       actorName: "Admin",
       actorRole: "管理员",
-      action: "管理员通过归档"
+      action: "管理员通过归档：人工复核确认可发布"
     });
   });
 
-  it("allows designers to delete their own tasks but blocks deleting another submitter's task", async () => {
+  it("soft-deletes owned tasks while preserving their audit history", async () => {
     await mutateDb((db) => {
       db.tasks.push(
         {
@@ -455,6 +601,7 @@ describe("API validation and health", () => {
           submissionRound: 1
         }
       );
+      db.logs.push({ id: "log_own_delete", taskId: "task_own_delete", actorName: "Hale", actorRole: "设计师", action: "历史记录", createdAt: "2026-05-13T00:00:00.000Z" });
     });
 
     const ownResponse = await request(app).delete("/api/reviews/task_own_delete").set(designerHeaders);
@@ -465,6 +612,37 @@ describe("API validation and health", () => {
     expect(otherResponse.status).toBe(403);
     expect(otherResponse.body.error).toContain("无权删除他人任务");
     expect(adminResponse.status).toBe(200);
+    const db = await readDb();
+    expect(db.tasks.find((task) => task.id === "task_own_delete")?.status).toBe("voided");
+    expect(db.tasks.find((task) => task.id === "task_other_delete")?.status).toBe("voided");
+    expect(db.logs.some((item) => item.id === "log_own_delete")).toBe(true);
+  });
+
+  it("blocks designers from editing or withdrawing another owner's task", async () => {
+    await mutateDb((db) => {
+      db.tasks.push({
+        id: "task_other_mutation",
+        title: "Other task",
+        contentType: "官网 Banner",
+        description: "",
+        source: "upload",
+        status: "needs_revision",
+        priority: "普通",
+        submitterName: "Other",
+        submitterId: "Other",
+        submitterRole: "设计师",
+        createdAt: "2026-05-13T00:00:00.000Z",
+        updatedAt: "2026-05-13T00:00:00.000Z",
+        submissionRound: 1
+      });
+    });
+
+    const edit = await request(app).patch("/api/reviews/task_other_mutation").set(designerHeaders).send({ title: "Claimed" });
+    const withdraw = await request(app).post("/api/reviews/task_other_mutation/withdraw").set(designerHeaders).send({});
+
+    expect(edit.status).toBe(403);
+    expect(withdraw.status).toBe(403);
+    expect((await readDb()).tasks.find((task) => task.id === "task_other_mutation")).toMatchObject({ title: "Other task", status: "needs_revision" });
   });
 
   it("filters generic placeholder annotations from review detail while preserving specific annotations", async () => {
@@ -565,6 +743,7 @@ describe("storage adapter", () => {
     process.env.DATABASE_URL = "postgresql://postgres:postgres@example.supabase.co:5432/postgres";
 
     expect(getStorageMode()).toBe("postgres");
+    delete process.env.DATABASE_URL;
   });
 
   it("persists mutations through the active storage adapter", async () => {
@@ -627,7 +806,7 @@ describe("storage adapter", () => {
     expect(db.logs.some((log) => log.taskId === "task_race_delete")).toBe(false);
   });
 
-  it("uses a writable tmp JSON store on Vercel when Postgres is not configured", async () => {
+  it("rejects Vercel mutations when Postgres is not configured", async () => {
     const tempCwd = fs.mkdtempSync(path.join(os.tmpdir(), "emke-vercel-cwd-"));
     const runtimeDir = path.join(os.tmpdir(), "emke-design-review");
     const runtimePath = path.join(runtimeDir, "reviews.json");
@@ -640,12 +819,11 @@ describe("storage adapter", () => {
     process.env.VERCEL = "1";
 
     try {
-      await mutateDb((db) => {
+      expect(isDurableStorage()).toBe(false);
+      await expect(mutateDb((db) => {
         db.logs.push({ id: "log_vercel_tmp", actorName: "Hale", actorRole: "管理员", action: "vercel tmp smoke", createdAt: "2026-06-16T00:00:00.000Z" });
-      });
-
-      const written = JSON.parse(fs.readFileSync(runtimePath, "utf8"));
-      expect(written.logs.map((log: any) => log.id)).toEqual(["log_vercel_tmp"]);
+      })).rejects.toThrow("持久数据库");
+      expect(fs.existsSync(runtimePath)).toBe(false);
     } finally {
       cwdSpy.mockRestore();
       fs.rmSync(runtimeDir, { recursive: true, force: true });

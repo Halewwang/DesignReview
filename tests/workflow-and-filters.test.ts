@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { assertCanDeleteTask, assertRole, assertTransition, canDeleteTaskStatus, canWithdrawTaskStatus, getAiDecisionStatus, getPreviousIssueRound, normalizeAiOnlyStatus } from "../server/services/workflow";
+import { assertCanDeleteTask, assertRole, assertTaskPermission, assertTransition, canDeleteTaskStatus, canWithdrawTaskStatus, getAiDecisionStatus, getPreviousIssueRound, normalizeAiOnlyStatus } from "../server/services/workflow";
 import { aiImageDetail, normalizeAiReview, reviewRubric, runAiReview, toReviewIssue } from "../server/services/aiReview";
-import { dashboardLanes, filterIssues, filterTasks } from "../src/shared/filters";
+import { dashboardLanes, defaultTaskFilters, filterIssues, filterTasks } from "../src/shared/filters";
 import { dashboardCommandCenter, normalizeStoredReviewNavigation, reviewTimeline, selectReviewRoundData } from "../src/shared/reviewFlow";
 import { validateImageFiles } from "../src/shared/uploads";
 
@@ -73,6 +73,13 @@ describe("workflow guards", () => {
     expect(() => assertCanDeleteTask("设计师", { submitterId: "EMKE-Hale", submitterName: "Hale" }, "EMKE-Hale")).not.toThrow();
     expect(() => assertCanDeleteTask("设计师", { submitterId: "Other", submitterName: "Other" }, "EMKE-Hale")).toThrow("当前身份无权删除他人任务");
     expect(() => assertCanDeleteTask("管理员", { submitterId: "Other", submitterName: "Other" }, "Admin")).not.toThrow();
+  });
+
+  it("uses the same ownership rule for every task mutation", () => {
+    const task = { submitterId: "EMKE-Hale", submitterName: "Hale" };
+    expect(() => assertTaskPermission("设计师", task, "EMKE-Hale", "编辑")).not.toThrow();
+    expect(() => assertTaskPermission("设计师", task, "Other", "编辑")).toThrow("当前身份无权编辑他人任务");
+    expect(() => assertTaskPermission("管理员", task, "Admin", "编辑")).not.toThrow();
   });
 });
 
@@ -364,6 +371,11 @@ describe("AI schema validation", () => {
 });
 
 describe("front-end filters", () => {
+  it("defaults designers to their own tasks while admins see the whole queue", () => {
+    expect(defaultTaskFilters("设计师")).toMatchObject({ onlyMine: true });
+    expect(defaultTaskFilters("管理员")).toMatchObject({ onlyMine: false });
+  });
+
   it("filters dashboard tasks by status, content type, submitter id, keyword, and mine", () => {
     const tasks = [
       baseTask,
@@ -391,7 +403,9 @@ describe("front-end filters", () => {
       { ...baseTask, id: "task_other_revision", status: "needs_revision", submitterId: "Other", submitterName: "Other" },
       { ...baseTask, id: "task_reviewing", status: "ai_reviewing", submitterId: "Other", submitterName: "Other" },
       { ...baseTask, id: "task_approved", status: "approved", submitterId: "Other", submitterName: "Other" },
-      { ...baseTask, id: "task_archived", status: "archived", submitterId: "Other", submitterName: "Other" }
+      { ...baseTask, id: "task_archived", status: "archived", submitterId: "Other", submitterName: "Other" },
+      { ...baseTask, id: "task_withdrawn", status: "withdrawn", submitterId: "Other", submitterName: "Other" },
+      { ...baseTask, id: "task_voided", status: "voided", submitterId: "Other", submitterName: "Other" }
     ] as any[];
 
     const lanes = dashboardLanes(tasks, { currentUserId: "EMKE-Hale", currentUserName: "Hale" });
@@ -400,7 +414,7 @@ describe("front-end filters", () => {
     expect(lanes.find((lane) => lane.key === "needs_revision")?.tasks.map((task) => task.id)).toEqual(["task_other_revision"]);
     expect(lanes.find((lane) => lane.key === "reviewing")?.tasks.map((task) => task.id)).toEqual(["task_reviewing"]);
     expect(lanes.find((lane) => lane.key === "approved")?.tasks.map((task) => task.id)).toEqual(["task_approved"]);
-    expect(lanes.find((lane) => lane.key === "closed")?.tasks.map((task) => task.id)).toEqual(["task_archived"]);
+    expect(lanes.find((lane) => lane.key === "closed")?.tasks.map((task) => task.id)).toEqual(["task_archived", "task_withdrawn", "task_voided"]);
   });
 
   it("prioritizes the dashboard command center around next actions and live review state", () => {

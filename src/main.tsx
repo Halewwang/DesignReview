@@ -19,11 +19,12 @@ import UploadCloud from "lucide-react/dist/esm/icons/upload-cloud.mjs";
 import "./styles.css";
 import { formatDeductionItem } from "./shared/aiDisplay";
 import { encodeHeaderValue } from "./shared/headerEncoding";
-import { filterIssues, filterTasks, IssueFilters, TaskFilters } from "./shared/filters";
+import { defaultTaskFilters, filterIssues, filterTasks, IssueFilters, TaskFilters } from "./shared/filters";
 import { dashboardCommandCenter, normalizeStoredReviewNavigation, reviewTimeline, selectReviewRoundData, type ReviewAppView, type ReviewTimelineStageState } from "./shared/reviewFlow";
 import { scoreTone } from "./shared/scoreDisplay";
 import { detectPreferredLanguage, hasHanText, languageLabel, localizeDynamicText, type Language } from "./shared/i18n";
 import { localizedArrayItem, reviewText } from "./shared/localizedReviewText";
+import { normalizeStoredSession, type StoredSession } from "./shared/session";
 import { validateImageFiles } from "./shared/uploads";
 
 type Role = "设计师" | "管理员";
@@ -37,10 +38,12 @@ type ReviewStatus =
   | "resubmitted"
   | "approved"
   | "archived"
+  | "withdrawn"
+  | "voided"
   | "figma_read_failed"
   | "ai_review_failed";
 
-type Session = { accessCode: string; role: Role; name: string; userId?: string };
+type Session = StoredSession;
 type Task = {
   id: string;
   title: string;
@@ -102,6 +105,18 @@ type Detail = {
   issues: Issue[];
   rounds?: number[];
   logs: any[];
+  job?: ReviewJob;
+};
+type ReviewJob = {
+  id: string;
+  taskId: string;
+  submissionRound: number;
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  stage: "queued" | "preparing" | "exporting" | "analyzing" | "reporting" | "succeeded" | "failed" | "cancelled";
+  attempt: number;
+  updatedAt: string;
+  leaseExpiresAt?: string;
+  error?: string;
 };
 type UploadedImageDraft = { id: string; fileName: string; mimeType: string; dataUrl: string; size: number };
 
@@ -131,9 +146,14 @@ const uiCopy: Record<Language, Record<string, string>> = {
     "Dashboard": "工作台",
     "VIS source": "VIS 标准源",
     "Settings": "设置",
+    "Switch role": "切换身份",
+    "Log out": "退出登录",
     "Track review queues, AI pre-review results, revision risks, and VIS sources.": "跟踪审核队列、AI 初审结果、修改风险和 VIS 标准源。",
     "New review task": "新建审核任务",
     "All tasks": "全部任务",
+    "My tasks": "我的任务",
+    "Show more ({count} remaining)": "加载更多（剩余 {count} 条）",
+    "Unable to load tasks. Existing results are retained; retry to refresh.": "任务加载失败。已保留上次结果，请重试刷新。",
     "AI suggests revision": "AI 建议修改",
     "AI approved": "AI 已通过",
     "Action required": "待我处理",
@@ -229,6 +249,8 @@ const uiCopy: Record<Language, Record<string, string>> = {
     "Workflow actions": "流程操作",
     "Admin approve": "通过",
     "Confirm approving this review task as an admin? It will be marked as approved archive.": "确认以管理员身份通过并归档当前项目？",
+    "Admin approval reason": "管理员通过原因",
+    "Enter the human review reason for overriding the AI result": "请输入人工复核后覆盖 AI 结论的原因",
     "Admin approve failed": "管理员通过失败",
     "No workflow action needed": "当前无需流程操作",
     "Evidence and issues": "证据与问题",
@@ -310,8 +332,11 @@ const uiCopy: Record<Language, Record<string, string>> = {
     "Request failed": "请求失败",
     "Confirm withdrawing this review task? It will remain recorded but leave the review queue.": "确认撤回这个审核任务？撤回后会保留记录，但不再进入审核队列。",
     "Withdraw failed": "撤回失败",
-    "Confirm deleting this review task? Related Frames, results, and issues will also be deleted.": "确认删除这个审核任务？相关 Frame、结果和问题记录会一起删除。",
+    "Confirm voiding this review task? Its Frames, results, issues, and activity history will be retained.": "确认作废这个审核任务？Frame、审核结果、问题和操作历史都会保留。",
     "Delete failed": "删除失败",
+    "Void": "作废",
+    "Void failed": "作废失败",
+    "Edit task name": "编辑任务名称",
     "Resubmit failed": "重新提交失败",
     "AI review in progress": "AI 审核进行中",
     "The system is analyzing selected images. This usually takes 1-3 minutes.": "系统正在分析已选图片，通常需要 1-3 分钟。",
@@ -322,6 +347,10 @@ const uiCopy: Record<Language, Record<string, string>> = {
     "AI visual analysis": "AI 视觉分析",
     "Step 3": "步骤 3",
     "Generating report": "生成审核报告",
+    "Queued for review": "等待审核执行",
+    "Preparing review": "准备审核数据",
+    "Exporting images": "导出审核图片",
+    "Attempt {attempt}": "第 {attempt} 次执行",
     "Reviewing now": "正在审核",
     "Started {minutes} min ago": "已开始 {minutes} 分钟",
     "Auto-refreshing": "自动刷新中",
@@ -403,16 +432,40 @@ function App() {
   const [session, setSession] = useState<Session | null>(() => {
     const raw = localStorage.getItem("emke-session");
     if (!raw) return null;
-    const saved = JSON.parse(raw) as Session;
-    if (saved.accessCode !== defaultAccessCode) {
-      const migrated = { ...saved, accessCode: defaultAccessCode };
-      localStorage.setItem("emke-session", JSON.stringify(migrated));
-      return migrated;
+    try {
+      const saved = normalizeStoredSession(JSON.parse(raw));
+      if (!saved) localStorage.removeItem("emke-session");
+      return saved;
+    } catch {
+      localStorage.removeItem("emke-session");
+      return null;
     }
-    return saved;
   });
   const [navigation, setNavigation] = useState(() => readStoredNavigation());
   const { view, activeTaskId } = navigation;
+
+  function clearSession() {
+    localStorage.removeItem("emke-session");
+    localStorage.removeItem(navigationStorageKey);
+    setNavigation(normalizeStoredReviewNavigation({ view: "dashboard", activeTaskId: null }));
+    setSession(null);
+  }
+
+  useEffect(() => {
+    const onSessionExpired = () => clearSession();
+    window.addEventListener("emke-session-expired", onSessionExpired);
+    return () => window.removeEventListener("emke-session-expired", onSessionExpired);
+  }, []);
+
+  async function leaveSession() {
+    if (session?.token) {
+      await fetch("/api/session", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${session.token}` }
+      }).catch(() => undefined);
+    }
+    clearSession();
+  }
 
   useEffect(() => {
     localStorage.setItem(navigationStorageKey, JSON.stringify(navigation));
@@ -435,7 +488,7 @@ function App() {
   return (
     <I18nContext.Provider value={i18n}>
       <AppErrorBoundary resetKey={`${view}:${activeTaskId ?? ""}`} onDashboard={() => navigate("dashboard")}>
-        <Shell session={session} view={view} onView={navigate}>
+        <Shell session={session} view={view} onView={navigate} onLogout={leaveSession} onSwitchRole={leaveSession}>
           {view === "dashboard" && <Dashboard session={session} onNew={() => navigate("new")} onOpen={(id) => navigate("detail", id)} />}
           {view === "new" && <NewTask session={session} onBack={() => navigate("dashboard")} onFrames={(id) => navigate("frames", id)} onDetail={(id) => navigate("detail", id)} />}
           {view === "frames" && activeTaskId && <FrameSelection session={session} taskId={activeTaskId} onBack={() => navigate("dashboard")} onDetail={() => navigate("detail", activeTaskId)} />}
@@ -488,14 +541,20 @@ function AccessScreen({ onEnter }: { onEnter: (session: Session) => void }) {
   async function submit(event: FormEvent) {
     event.preventDefault();
     setError("");
-    const response = await fetch("/api/access", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accessCode }) });
-    if (!response.ok) {
-      setError((await response.json()).error ?? t("Request failed"));
-      return;
+    try {
+      const response = await fetch("/api/access", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ accessCode, role, name }) });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setError(result.error ?? t("Request failed"));
+        return;
+      }
+      const session = normalizeStoredSession(result.session);
+      if (!session) throw new Error(t("Request failed"));
+      localStorage.setItem("emke-session", JSON.stringify(session));
+      onEnter(session);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : t("Request failed"));
     }
-    const session = { accessCode, role, name: name || role, userId: name || role };
-    localStorage.setItem("emke-session", JSON.stringify(session));
-    onEnter(session);
   }
 
   return (
@@ -514,7 +573,7 @@ function AccessScreen({ onEnter }: { onEnter: (session: Session) => void }) {
   );
 }
 
-function Shell({ session, view, onView, children }: { session: Session; view: string; onView: (view: ReviewAppView) => void; children: React.ReactNode }) {
+function Shell({ session, view, onView, onLogout, onSwitchRole, children }: { session: Session; view: string; onView: (view: ReviewAppView) => void; onLogout: () => void; onSwitchRole: () => void; children: React.ReactNode }) {
   const { t, label } = useI18n();
   return (
     <div className="app-shell">
@@ -532,6 +591,10 @@ function Shell({ session, view, onView, children }: { session: Session; view: st
           <LanguageSwitcher />
           <button className={`sidebar-link ${view === "settings" ? "active" : ""}`} type="button" onClick={() => onView("settings")}><Settings size={15} /> {t("Settings")}</button>
           <div className="sidebar-user"><div className="avatar" title={`${label(session.role)} ${session.name}`}>{avatarText(session.name)}</div><span><strong>{session.name}</strong><small>{label(session.role)}</small></span></div>
+          <div className="sidebar-session-actions">
+            <button type="button" onClick={onSwitchRole}>{t("Switch role")}</button>
+            <button type="button" onClick={onLogout}>{t("Log out")}</button>
+          </div>
         </div>
       </aside>
       <section className="app-main">
@@ -545,8 +608,8 @@ function LanguageSwitcher() {
   const { language, setLanguage } = useI18n();
   return (
     <div className="language-switcher" aria-label="Language">
-      <button className={language === "zh" ? "active" : ""} type="button" onClick={() => setLanguage("zh")}>中文</button>
-      <button className={language === "en" ? "active" : ""} type="button" onClick={() => setLanguage("en")}>EN</button>
+      <button className={language === "zh" ? "active" : ""} type="button" aria-pressed={language === "zh"} onClick={() => setLanguage("zh")}>中文</button>
+      <button className={language === "en" ? "active" : ""} type="button" aria-pressed={language === "en"} onClick={() => setLanguage("en")}>EN</button>
     </div>
   );
 }
@@ -554,7 +617,8 @@ function LanguageSwitcher() {
 function Dashboard({ session, onNew, onOpen }: { session: Session; onNew: () => void; onOpen: (id: string) => void }) {
   const { t } = useI18n();
   const { data: tasks, error, reload, loading } = useApi<Task[]>("/api/reviews", session, []);
-  const [filters, setFilters] = useState<TaskFilters>({ contentType: "", status: "", submitterId: "", keyword: "", onlyMine: false });
+  const [filters, setFilters] = useState<TaskFilters>(() => defaultTaskFilters(session.role));
+  const [visibleTaskCount, setVisibleTaskCount] = useState(10);
   const hasActiveAiReview = tasks.some((task) => task.status === "ai_reviewing");
   const filteredTasks = useMemo(
     () => filterTasks(tasks, { ...filters, currentUserId: session.userId, currentUserName: session.name }),
@@ -564,6 +628,11 @@ function Dashboard({ session, onNew, onOpen }: { session: Session; onNew: () => 
     () => dashboardCommandCenter(tasks, { currentUserId: session.userId, currentUserName: session.name }),
     [tasks, session.userId, session.name]
   );
+
+  function updateFilters(nextFilters: TaskFilters) {
+    setFilters(nextFilters);
+    setVisibleTaskCount(10);
+  }
 
   useEffect(() => {
     if (!hasActiveAiReview) return;
@@ -607,7 +676,7 @@ function Dashboard({ session, onNew, onOpen }: { session: Session; onNew: () => 
             title={t("Priority work")}
             description={t("Tasks that need Frame selection, retry, withdrawal, deletion, or resubmission.")}
             tasks={commandCenter.primaryAction}
-            emptyText={loading ? t("Loading tasks...") : t("Empty")}
+            emptyText={error ? t("Unable to load tasks. Existing results are retained; retry to refresh.") : loading ? t("Loading tasks...") : t("Empty")}
             onOpen={onOpen}
           />
 
@@ -621,7 +690,7 @@ function Dashboard({ session, onNew, onOpen }: { session: Session; onNew: () => 
             </div>
             <div className="pipeline-review-stack">
               {commandCenter.liveReview.map((task) => <TaskCard task={task} onOpen={onOpen} key={task.id} compact />)}
-              {commandCenter.liveReview.length === 0 && <div className="lane-empty">{loading ? t("Loading tasks...") : t("Empty")}</div>}
+              {commandCenter.liveReview.length === 0 && <div className="lane-empty">{error ? t("Unable to load tasks. Existing results are retained; retry to refresh.") : loading ? t("Loading tasks...") : t("Empty")}</div>}
             </div>
           </section>
 
@@ -655,12 +724,13 @@ function Dashboard({ session, onNew, onOpen }: { session: Session; onNew: () => 
             </div>
             <span className="chip-soft">{filteredTasks.length}</span>
           </div>
-          <TaskFilterBar filters={filters} onChange={setFilters} />
+          <TaskFilterBar filters={filters} onChange={updateFilters} />
           <div className="task-ledger-list">
-            {filteredTasks.slice(0, 10).map((task) => <TaskCard task={task} onOpen={onOpen} key={task.id} compact />)}
-            {!loading && filteredTasks.length === 0 && tasks.length > 0 && <div className="lane-empty">{t("No tasks match the current filters")}</div>}
-            {!loading && tasks.length === 0 && <div className="empty">{t("No review tasks yet. Create a task and start AI review first.")}</div>}
+            {filteredTasks.slice(0, visibleTaskCount).map((task) => <TaskCard task={task} onOpen={onOpen} key={task.id} compact />)}
+            {!loading && !error && filteredTasks.length === 0 && tasks.length > 0 && <div className="lane-empty">{t("No tasks match the current filters")}</div>}
+            {!loading && !error && tasks.length === 0 && <div className="empty">{t("No review tasks yet. Create a task and start AI review first.")}</div>}
           </div>
+          {filteredTasks.length > visibleTaskCount && <button className="hero-button subtle browse-more" type="button" onClick={() => setVisibleTaskCount((count) => count + 10)}>{t("Show more ({count} remaining)", { count: filteredTasks.length - visibleTaskCount })}</button>}
         </section>
       </section>
     </main>
@@ -752,6 +822,7 @@ function TaskFilterBar({ filters, onChange }: { filters: TaskFilters; onChange: 
           value={filters.submitterId ?? ""}
           onChange={(event) => onChange({ ...filters, submitterId: event.target.value })}
         />
+        <button className={`hero-button subtle mine-toggle ${filters.onlyMine ? "active" : ""}`} type="button" aria-pressed={Boolean(filters.onlyMine)} onClick={() => onChange({ ...filters, onlyMine: !filters.onlyMine })}>{filters.onlyMine ? t("My tasks") : t("All tasks")}</button>
         <button className="hero-button subtle" type="button" onClick={() => onChange({ ...filters, contentType: "", status: "", submitterId: "", keyword: "" })}>{t("Reset")}</button>
       </div>
     </div>
@@ -784,7 +855,7 @@ function TaskCard({ task, onOpen, compact = false }: { task: Task; onOpen: (id: 
 
 function NewTask({ session, onBack, onFrames, onDetail }: { session: Session; onBack: () => void; onFrames: (id: string) => void; onDetail: (id: string) => void }) {
   const { t, label } = useI18n();
-  const [form, setForm] = useState({ title: "", contentType: "官网 Banner" as ContentType, description: "", figmaUrl: "", priority: "普通", submitterId: session.userId ?? session.name });
+  const [form, setForm] = useState({ title: "", contentType: "官网 Banner" as ContentType, description: "", figmaUrl: "", priority: "普通" });
   const { data: health } = useApi<any>("/api/health", session, null);
   const [sourceMode, setSourceMode] = useState<"upload" | "figma">("upload");
   const [images, setImages] = useState<UploadedImageDraft[]>([]);
@@ -863,15 +934,15 @@ function NewTask({ session, onBack, onFrames, onDetail }: { session: Session; on
         <fieldset className="choice-field compact">
           <legend>{t("Submission method")}</legend>
           <div className="choice-group">
-            <button type="button" className={sourceMode === "upload" ? "active" : ""} onClick={() => setSourceMode("upload")}><UploadCloud size={15} /> {t("Upload images")}</button>
-            <button type="button" className={sourceMode === "figma" ? "active" : ""} onClick={() => setSourceMode("figma")}><ImageIcon size={15} /> {t("Figma link")}</button>
+            <button type="button" className={sourceMode === "upload" ? "active" : ""} aria-pressed={sourceMode === "upload"} onClick={() => setSourceMode("upload")}><UploadCloud size={15} /> {t("Upload images")}</button>
+            <button type="button" className={sourceMode === "figma" ? "active" : ""} aria-pressed={sourceMode === "figma"} onClick={() => setSourceMode("figma")}><ImageIcon size={15} /> {t("Figma link")}</button>
           </div>
         </fieldset>
         <fieldset className="choice-field">
           <legend>{t("Content type")}</legend>
           <div className="choice-group">
             {(["电商页面", "Amazon A+ 页面", "官网 Banner"] as ContentType[]).map((contentType) => (
-              <button type="button" className={form.contentType === contentType ? "active" : ""} key={contentType} onClick={() => setForm({ ...form, contentType })}>{label(contentType)}</button>
+              <button type="button" className={form.contentType === contentType ? "active" : ""} aria-pressed={form.contentType === contentType} key={contentType} onClick={() => setForm({ ...form, contentType })}>{label(contentType)}</button>
             ))}
           </div>
         </fieldset>
@@ -906,12 +977,12 @@ function NewTask({ session, onBack, onFrames, onDetail }: { session: Session; on
         ) : (
           <label>{t("Figma project link")}<input value={form.figmaUrl} onChange={(event) => setForm({ ...form, figmaUrl: event.target.value })} placeholder="https://www.figma.com/design/..." required={sourceMode === "figma"} /></label>
         )}
-        <label>{t("Submitter ID")}<input value={form.submitterId} onChange={(event) => setForm({ ...form, submitterId: event.target.value })} placeholder={t("Used to track submitters, e.g. EMKE-Hale")} /></label>
+        <div className="meta">{t("Submitter: {name}", { name: session.name })} · ID {session.userId ?? session.name}</div>
         <fieldset className="choice-field compact">
           <legend>{t("Priority")}</legend>
           <div className="choice-group">
             {["普通", "加急"].map((priority) => (
-              <button type="button" className={form.priority === priority ? "active" : ""} key={priority} onClick={() => setForm({ ...form, priority })}>{label(priority)}</button>
+              <button type="button" className={form.priority === priority ? "active" : ""} aria-pressed={form.priority === priority} key={priority} onClick={() => setForm({ ...form, priority })}>{label(priority)}</button>
             ))}
           </div>
         </fieldset>
@@ -1022,7 +1093,7 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
   const [activeFrameId, setActiveFrameId] = useState("");
   const [zoom, setZoom] = useState(100);
   const [editingMeta, setEditingMeta] = useState(false);
-  const [metaDraft, setMetaDraft] = useState({ title: "", submitterId: "" });
+  const [metaDraft, setMetaDraft] = useState({ title: "" });
   const [selectedRound, setSelectedRound] = useState<number | "latest">("latest");
   const [issueFilters, setIssueFilters] = useState<IssueFilters>({ frameName: "", type: "", severity: "", resolutionStatus: "", mustFixOnly: false });
   const [activeIssueId, setActiveIssueId] = useState("");
@@ -1030,6 +1101,7 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
   const [resubmitBusy, setResubmitBusy] = useState(false);
   const [adminApproveBusy, setAdminApproveBusy] = useState(false);
   const uploadResubmitInputRef = useRef<HTMLInputElement>(null);
+  const runningJobRef = useRef("");
   const frames = detailData?.frames.filter((frame) => frame.selected || frame.exportedImageUrl) ?? [];
   const activeFrame = frames.find((frame) => frame.id === activeFrameId) ?? frames[0];
   const roundData = selectReviewRoundData({
@@ -1043,18 +1115,30 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
   const visibleAnnotatedIssues = filteredIssues.filter((issue) => issue.annotationSuggestion && (!issue.frameName || !activeFrame?.frameName || issue.frameName === activeFrame.frameName));
   const annotationIndexByIssueId = new Map(visibleAnnotatedIssues.map((issue, index) => [issue.id, index + 1]));
   const aiReviewing = detailData?.task.status === "ai_reviewing";
+  const reviewJob = detailData?.job;
   const maxUploadImages = Number(health?.maxUploadImagesPerTask ?? 9);
   const reviewUpdatedAt = detailData?.task.updatedAt ? Date.parse(detailData.task.updatedAt) : NaN;
   const reviewAgeMinutes = Number.isFinite(reviewUpdatedAt) ? Math.max(0, Math.floor((Date.now() - reviewUpdatedAt) / 60000)) : 0;
 
   useEffect(() => {
-    if (detailData?.task) setMetaDraft({ title: detailData.task.title, submitterId: detailData.task.submitterId ?? "" });
-  }, [detailData?.task?.id, detailData?.task?.title, detailData?.task?.submitterId]);
-  useEffect(() => {
     if (!aiReviewing) return;
     const timer = window.setInterval(() => reload(), 10000);
     return () => window.clearInterval(timer);
   }, [aiReviewing, reload]);
+  useEffect(() => {
+    if (!aiReviewing || !reviewJob) return;
+    const leaseExpired = reviewJob.status === "running" && (!reviewJob.leaseExpiresAt || Date.parse(reviewJob.leaseExpiresAt) <= Date.now());
+    if (reviewJob.status !== "queued" && !leaseExpired) return;
+    const runKey = `${reviewJob.id}:${reviewJob.attempt}`;
+    if (runningJobRef.current === runKey) return;
+    runningJobRef.current = runKey;
+    api(`/api/reviews/${taskId}/run-ai-review`, session, { method: "POST" })
+      .then(() => reload())
+      .catch((err) => setError(err instanceof Error ? err.message : t("AI pre-review failed")))
+      .finally(() => {
+        if (runningJobRef.current === runKey) runningJobRef.current = "";
+      });
+  }, [aiReviewing, reviewJob, reload, session, taskId, t]);
 
   async function resubmit() {
     setError("");
@@ -1138,11 +1222,12 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
   }
 
   async function adminApproveTask() {
-    if (!window.confirm(t("Confirm approving this review task as an admin? It will be marked as approved archive."))) return;
+    const reason = window.prompt(t("Enter the human review reason for overriding the AI result"));
+    if (!reason?.trim()) return;
     setError("");
     setAdminApproveBusy(true);
     try {
-      await api(`/api/reviews/${taskId}/admin-approve`, session, { method: "POST" });
+      await api(`/api/reviews/${taskId}/admin-approve`, session, { method: "POST", body: { reason: reason.trim() } });
       reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("Admin approve failed"));
@@ -1152,22 +1237,23 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
   }
 
   async function deleteTask() {
-    if (!window.confirm(t("Confirm deleting this review task? Related Frames, results, and issues will also be deleted."))) return;
+    if (!window.confirm(t("Confirm voiding this review task? Its Frames, results, issues, and activity history will be retained."))) return;
     setError("");
     try {
       await api(`/api/reviews/${taskId}`, session, { method: "DELETE" });
       onDashboard();
     } catch (err) {
-      setError(err instanceof Error ? err.message : t("Delete failed"));
+      setError(err instanceof Error ? err.message : t("Void failed"));
     }
   }
 
   if (!detailData) return <main className="workspace"><div className="panel">{loadError || t("Loading review details...")}</div></main>;
-  const canWithdraw = ["frame_selection", "needs_revision", "resubmitted", "figma_read_failed", "ai_review_failed"].includes(detailData.task.status);
   const currentUserKeys = [session.userId, session.name].map((value) => String(value ?? "").trim().toLowerCase()).filter(Boolean);
   const ownsTask = [detailData.task.submitterId, detailData.task.submitterName].map((value) => String(value ?? "").trim().toLowerCase()).some((value) => currentUserKeys.includes(value));
-  const canDelete = (session.role === "管理员" || ownsTask) && ["draft", "figma_reading", "frame_selection", "ai_reviewing", "needs_revision", "resubmitted", "approved", "archived", "figma_read_failed", "ai_review_failed"].includes(detailData.task.status);
-  const canAdminApprove = session.role === "管理员" && detailData.task.status !== "approved" && detailData.task.status !== "archived";
+  const canManageTask = session.role === "管理员" || ownsTask;
+  const canWithdraw = canManageTask && ["frame_selection", "needs_revision", "resubmitted", "figma_read_failed", "ai_review_failed"].includes(detailData.task.status);
+  const canDelete = (session.role === "管理员" || ownsTask) && ["draft", "figma_reading", "frame_selection", "ai_reviewing", "needs_revision", "resubmitted", "approved", "archived", "withdrawn", "figma_read_failed", "ai_review_failed"].includes(detailData.task.status);
+  const canAdminApprove = session.role === "管理员" && ["needs_revision", "ai_review_failed"].includes(detailData.task.status);
   const workflowActions = (
     <section className="panel decision-actions-panel preview-workflow-panel">
       <div className="panel-section-head">
@@ -1178,17 +1264,17 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
       </div>
       <div className="decision-actions">
         {canAdminApprove && <button className="primary admin-approve-action" type="button" onClick={adminApproveTask} disabled={adminApproveBusy}><CheckCircle2 size={15} /> {adminApproveBusy ? t("Submitting...") : t("Admin approve")}</button>}
-        {detailData.task.status === "needs_revision" && detailData.task.source === "upload" ? (
+        {canManageTask && detailData.task.status === "needs_revision" && detailData.task.source === "upload" ? (
           <>
             <button className="primary" type="button" onClick={() => uploadResubmitInputRef.current?.click()} disabled={resubmitBusy}><UploadCloud size={15} /> {resubmitBusy ? t("Submitting...") : t("Upload images and resubmit")}</button>
             <input ref={uploadResubmitInputRef} aria-label={t("Upload images and resubmit")} className="hidden-file-input" type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => resubmitUploadedImages(event.target.files)} />
           </>
-        ) : detailData.task.status === "needs_revision" && <button className="primary" type="button" onClick={resubmit}><RefreshCw size={15} /> {t("Resubmit")}</button>}
-        {detailData.task.status === "figma_read_failed" && <button className="primary" type="button" onClick={retryReadFigma}><RefreshCw size={15} /> {t("Reload Figma")}</button>}
-        {detailData.task.status === "ai_review_failed" && <button className="primary" type="button" onClick={retryAiReview}><Sparkles size={15} /> {t("Retry AI review")}</button>}
+        ) : canManageTask && detailData.task.status === "needs_revision" && <button className="primary" type="button" onClick={resubmit}><RefreshCw size={15} /> {t("Resubmit")}</button>}
+        {canManageTask && detailData.task.status === "figma_read_failed" && <button className="primary" type="button" onClick={retryReadFigma}><RefreshCw size={15} /> {t("Reload Figma")}</button>}
+        {canManageTask && detailData.task.status === "ai_review_failed" && <button className="primary" type="button" onClick={retryAiReview}><Sparkles size={15} /> {t("Retry AI review")}</button>}
         <div className="decision-secondary-actions" aria-label={t("Workflow actions")}>
           {canWithdraw && <button className="action-button" type="button" onClick={withdrawTask}><Undo2 size={15} /> {t("Withdraw")}</button>}
-          {canDelete && <button className="danger compact" type="button" onClick={deleteTask}><Trash2 size={15} /> {t("Delete")}</button>}
+          {canDelete && <button className="danger compact" type="button" onClick={deleteTask}><Trash2 size={15} /> {t("Void")}</button>}
           <button className="action-button icon-only" type="button" onClick={reload} aria-label={t("Refresh")} title={t("Refresh")}><RefreshCw size={15} /></button>
         </div>
         {!canAdminApprove && !canWithdraw && !canDelete && detailData.task.status !== "needs_revision" && detailData.task.status !== "figma_read_failed" && detailData.task.status !== "ai_review_failed" && <span className="meta">{t("No workflow action needed")}</span>}
@@ -1203,7 +1289,6 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
           {editingMeta ? (
             <div className="meta-editor">
               <input aria-label={t("Task name")} value={metaDraft.title} onChange={(event) => setMetaDraft({ ...metaDraft, title: event.target.value })} />
-              <input aria-label={t("Submitter ID")} value={metaDraft.submitterId} onChange={(event) => setMetaDraft({ ...metaDraft, submitterId: event.target.value })} placeholder={t("Submitter ID")} />
             </div>
           ) : (
             <>
@@ -1223,7 +1308,7 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
       </section>
       <ReviewFlowRail status={detailData.task.status} />
       {(loadError || error) && <div className="error">{loadError || error}</div>}
-      {aiReviewing && <AiReviewProgressPanel minutes={reviewAgeMinutes} onRefresh={reload} />}
+      {aiReviewing && <AiReviewProgressPanel minutes={reviewAgeMinutes} job={detailData.job} onRefresh={reload} />}
       <section className="review-layout">
         <div className="preview-panel">
           <div className="preview-toolbar">
@@ -1233,7 +1318,7 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
               </button>
             ))}</div>
             <div className="preview-action-row head-actions">
-              {editingMeta ? <button className="action-button primary-action" type="button" onClick={saveMeta}>{t("Save")}</button> : <button className="action-button icon-only" type="button" onClick={() => setEditingMeta(true)} aria-label={t("Edit name / ID")} title={t("Edit name / ID")}><Settings size={15} /></button>}
+              {editingMeta ? <button className="action-button primary-action" type="button" onClick={saveMeta}>{t("Save")}</button> : canManageTask && <button className="action-button icon-only" type="button" onClick={() => { setMetaDraft({ title: detailData.task.title }); setEditingMeta(true); }} aria-label={t("Edit task name")} title={t("Edit task name")}><Settings size={15} /></button>}
             </div>
             <div className="zoom-controls">
               <button type="button" onClick={() => setZoom(Math.max(50, zoom - 10))} title={t("Zoom out")}><Minus size={15} /></button>
@@ -1308,20 +1393,23 @@ function ReviewFlowRail({ status }: { status: ReviewStatus }) {
   );
 }
 
-function AiReviewProgressPanel({ minutes, onRefresh }: { minutes: number; onRefresh: () => void }) {
+function AiReviewProgressPanel({ minutes, job, onRefresh }: { minutes: number; job?: ReviewJob; onRefresh: () => void }) {
   const { t } = useI18n();
+  const activeStep = job?.stage === "reporting" ? 3 : job?.stage === "analyzing" ? 2 : 1;
+  const stageLabel = job?.stage === "queued" ? t("Queued for review") : job?.stage === "preparing" ? t("Preparing review") : job?.stage === "exporting" ? t("Exporting images") : job?.stage === "reporting" ? t("Generating report") : t("AI visual analysis");
   return (
     <section className="panel ai-progress-panel">
       <div>
         <div className="eyebrow">{t("Reviewing now")}</div>
         <h3>{t("AI review in progress")}</h3>
+        <p><strong>{stageLabel}</strong>{job?.attempt ? ` · ${t("Attempt {attempt}", { attempt: job.attempt })}` : ""}</p>
         <p>{t("The system is analyzing selected images. This usually takes 1-3 minutes.")}</p>
         <p>{t("If it runs longer than a few minutes, refresh this page. Timed-out reviews will become retryable automatically.")}</p>
       </div>
       <div className="ai-progress-steps" aria-label={t("AI review in progress")}>
-        <span><b>{t("Step 1")}</b>{t("Image exported")}</span>
-        <span className="active"><b>{t("Step 2")}</b>{t("AI visual analysis")}</span>
-        <span><b>{t("Step 3")}</b>{t("Generating report")}</span>
+        <span className={activeStep === 1 ? "active" : ""}><b>{t("Step 1")}</b>{t("Image exported")}</span>
+        <span className={activeStep === 2 ? "active" : ""}><b>{t("Step 2")}</b>{t("AI visual analysis")}</span>
+        <span className={activeStep === 3 ? "active" : ""}><b>{t("Step 3")}</b>{t("Generating report")}</span>
       </div>
       <div className="ai-progress-actions">
         <span>{t("Started {minutes} min ago", { minutes })}</span>
@@ -1373,8 +1461,8 @@ function IssueFilterBar({
         <option value="建议">{label("建议")}</option>
       </select>
       <div className="segmented">
-        <button className={!filters.mustFixOnly ? "active" : ""} type="button" onClick={() => onChange({ ...filters, mustFixOnly: false })}>{t("All issues")}</button>
-        <button className={filters.mustFixOnly ? "active" : ""} type="button" onClick={() => onChange({ ...filters, mustFixOnly: true })}>{t("Must fix")}</button>
+        <button className={!filters.mustFixOnly ? "active" : ""} type="button" aria-pressed={!filters.mustFixOnly} onClick={() => onChange({ ...filters, mustFixOnly: false })}>{t("All issues")}</button>
+        <button className={filters.mustFixOnly ? "active" : ""} type="button" aria-pressed={Boolean(filters.mustFixOnly)} onClick={() => onChange({ ...filters, mustFixOnly: true })}>{t("Must fix")}</button>
       </div>
     </section>
   );
@@ -1704,18 +1792,24 @@ function formatFileSize(size: number) {
 }
 
 async function api<T>(url: string, session: Session, options: { method?: string; body?: unknown } = {}): Promise<T> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (session.token) headers.Authorization = `Bearer ${session.token}`;
+  if (session.accessCode) {
+    headers["x-access-code"] = encodeHeaderValue(session.accessCode);
+    headers["x-actor-name"] = encodeHeaderValue(session.name);
+    headers["x-actor-role"] = encodeHeaderValue(session.role);
+    headers["x-actor-id"] = encodeHeaderValue(session.userId ?? session.name);
+  }
   const response = await fetch(url, {
     method: options.method ?? "GET",
-    headers: {
-      "Content-Type": "application/json",
-      "x-access-code": encodeHeaderValue(session.accessCode),
-      "x-actor-name": encodeHeaderValue(session.name),
-      "x-actor-role": encodeHeaderValue(session.role),
-      "x-actor-id": encodeHeaderValue(session.userId ?? session.name)
-    },
+    headers,
     body: options.body ? JSON.stringify(options.body) : undefined
   });
   const json = await response.json().catch(() => ({}));
+  if (response.status === 401) {
+    localStorage.removeItem("emke-session");
+    window.dispatchEvent(new Event("emke-session-expired"));
+  }
   if (!response.ok) throw new Error(json.error ?? "请求失败");
   return json;
 }
@@ -1737,7 +1831,6 @@ function useApi<T>(url: string, session: Session, fallback: T) {
       if (requestId === requestIdRef.current) setData(nextData);
     } catch (err) {
       if (requestId === requestIdRef.current) {
-        setData(fallbackRef.current);
         setError(err instanceof Error ? err.message : "请求失败");
       }
     } finally {

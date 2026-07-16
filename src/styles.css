@@ -1494,6 +1494,27 @@ textarea:focus {
   border-color: transparent;
 }
 
+.sidebar-session-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.sidebar-session-actions button {
+  min-height: 36px;
+  padding: 0 10px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.sidebar-session-actions button:hover {
+  color: var(--foreground);
+  background: var(--default);
+}
+
 .avatar {
   width: 42px;
   height: 42px;
@@ -4512,7 +4533,7 @@ nav button,
 
 .hero-filter-bar > .filter-bar-grid {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(132px, .42fr) minmax(132px, .42fr) minmax(110px, .34fr) auto;
+  grid-template-columns: minmax(220px, 1fr) minmax(132px, .42fr) minmax(132px, .42fr) minmax(110px, .34fr) auto auto;
   gap: 8px;
   align-items: center;
   padding: 0 !important;
@@ -4520,6 +4541,16 @@ nav button,
 
 .filter-bar-grid > * {
   min-width: 0;
+}
+
+.mine-toggle.active {
+  color: var(--accent-foreground);
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.browse-more {
+  justify-self: center;
 }
 
 input,
@@ -4764,6 +4795,21 @@ nav button,
 
   .task-ledger-list {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1280px) {
+  .command-main-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .secondary-workflow-stack {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: auto;
+  }
+
+  .hero-filter-bar > .filter-bar-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
