@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertCanDeleteTask, assertRole, assertTaskPermission, assertTransition, canDeleteTaskStatus, canWithdrawTaskStatus, getAiDecisionStatus, getPreviousIssueRound, normalizeAiOnlyStatus } from "../server/services/workflow";
+import { assertCanDeleteTask, assertRole, assertTaskPermission, assertTaskViewPermission, assertTransition, canDeleteTaskStatus, canViewTask, canWithdrawTaskStatus, getAiDecisionStatus, getPreviousIssueRound, normalizeAiOnlyStatus } from "../server/services/workflow";
 import { aiImageDetail, normalizeAiReview, reviewRubric, runAiReview, toReviewIssue } from "../server/services/aiReview";
 import { dashboardLanes, defaultTaskFilters, filterIssues, filterTasks } from "../src/shared/filters";
 import { dashboardCommandCenter, normalizeStoredReviewNavigation, reviewTimeline, selectReviewRoundData } from "../src/shared/reviewFlow";
@@ -80,6 +80,16 @@ describe("workflow guards", () => {
     expect(() => assertTaskPermission("设计师", task, "EMKE-Hale", "编辑")).not.toThrow();
     expect(() => assertTaskPermission("设计师", task, "Other", "编辑")).toThrow("当前身份无权编辑他人任务");
     expect(() => assertTaskPermission("管理员", task, "Admin", "编辑")).not.toThrow();
+  });
+
+  it("limits designers to their own tasks while privileged readers see all", () => {
+    const task = { submitterId: "EMKE-Hale", submitterName: "Hale" };
+
+    expect(canViewTask("设计师", task, "EMKE-Hale")).toBe(true);
+    expect(canViewTask("设计师", task, "Other")).toBe(false);
+    expect(canViewTask("运营", task, "Ops")).toBe(true);
+    expect(canViewTask("管理员", task, "Admin")).toBe(true);
+    expect(() => assertTaskViewPermission("设计师", task, "Other")).toThrow("当前身份无权查看他人任务");
   });
 });
 

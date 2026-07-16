@@ -8,7 +8,7 @@ import { loadBrandStandardAsync, parseMarkdownSections, saveUploadedBrandStandar
 import { getAiProviderConfig, getAiProviderConfigAsync, getDefaultAiModel, getDefaultAiModelAsync, runAiReview, saveAiProviderConfigAsync, toReviewIssue } from "./services/aiReview.js";
 import { ContentType, ReviewFrame, ReviewIssue, ReviewJob, ReviewTask, Role } from "./types.js";
 import { decodeHeaderValue } from "../src/shared/headerEncoding.js";
-import { assertCanDeleteTask, assertRole, assertTaskPermission, assertTransition, canDeleteTaskStatus, canWithdrawTaskStatus, getAiDecisionStatus, getPreviousIssueRound, normalizeAiOnlyStatus } from "./services/workflow.js";
+import { assertCanDeleteTask, assertRole, assertTaskPermission, assertTaskViewPermission, assertTransition, canDeleteTaskStatus, canViewTask, canWithdrawTaskStatus, getAiDecisionStatus, getPreviousIssueRound, normalizeAiOnlyStatus } from "./services/workflow.js";
 
 dotenv.config();
 
@@ -211,13 +211,17 @@ app.post("/api/vis/current", async (req, res) => {
   }
 });
 
-app.get("/api/reviews", async (_req, res) => {
+app.get("/api/reviews", async (req, res) => {
   const db = await reconcileStaleAiReviews();
-  const tasks = db.tasks.map((task) => ({
-    ...normalizeAiOnlyTask(task),
-    frameCount: db.frames.filter((frame) => frame.taskId === task.id).length,
-    issueCount: db.issues.filter((issue) => issue.taskId === task.id).length
-  }));
+  const requestActor = actor(req);
+  const identity = requestActor.actorId ?? requestActor.actorName;
+  const tasks = db.tasks
+    .filter((task) => canViewTask(requestActor.actorRole, task, identity))
+    .map((task) => ({
+      ...normalizeAiOnlyTask(task),
+      frameCount: db.frames.filter((frame) => frame.taskId === task.id).length,
+      issueCount: db.issues.filter((issue) => issue.taskId === task.id).length
+    }));
   res.json(tasks);
 });
 
@@ -225,6 +229,12 @@ app.get("/api/reviews/:id", async (req, res) => {
   const db = await reconcileStaleAiReviews();
   const task = db.tasks.find((item) => item.id === req.params.id);
   if (!task) return res.status(404).json({ error: "任务不存在" });
+  try {
+    const requestActor = actor(req);
+    assertTaskViewPermission(requestActor.actorRole, task, requestActor.actorId ?? requestActor.actorName);
+  } catch (error) {
+    return res.status(403).json({ error: errorMessage(error) });
+  }
   const taskIssues = db.issues.filter((issue) => issue.taskId === task.id).map((issue) => {
     const issueWithRound = { ...issue, submissionRound: issue.submissionRound ?? task.submissionRound ?? 1 };
     if (issue.relatedStandardSection === "Design Principles" && issue.locationDescription?.includes("主视觉右侧卖点区域")) {

@@ -72,6 +72,66 @@ describe("API validation and health", () => {
     expect(response.body.session.token).toEqual(expect.any(String));
   });
 
+  it("limits task reads by the authenticated session role and identity", async () => {
+    process.env.REVIEW_ALLOW_LEGACY_HEADER_AUTH = "0";
+    const designerAccess = await request(app)
+      .post("/api/access")
+      .send({ accessCode: "emke.de", role: "设计师", name: "EMKE-Hale" });
+    const operationsAccess = await request(app)
+      .post("/api/access")
+      .send({ accessCode: "emke.de", role: "运营", name: "Ops" });
+
+    await mutateDb((db) => {
+      const sessions = db.sessions;
+      Object.assign(db, createEmptyDb());
+      db.sessions = sessions;
+      db.tasks.push(
+        {
+          id: "task_hale",
+          title: "Hale task",
+          contentType: "官网 Banner",
+          description: "",
+          source: "upload",
+          status: "needs_revision",
+          priority: "普通",
+          submitterName: "Hale",
+          submitterId: "EMKE-Hale",
+          submitterRole: "设计师",
+          createdAt: "2026-07-16T00:00:00.000Z",
+          updatedAt: "2026-07-16T00:00:00.000Z",
+          submissionRound: 1
+        },
+        {
+          id: "task_other",
+          title: "Other task",
+          contentType: "官网 Banner",
+          description: "",
+          source: "upload",
+          status: "needs_revision",
+          priority: "普通",
+          submitterName: "Other",
+          submitterId: "Other",
+          submitterRole: "设计师",
+          createdAt: "2026-07-16T00:00:00.000Z",
+          updatedAt: "2026-07-16T00:00:00.000Z",
+          submissionRound: 1
+        }
+      );
+    });
+
+    const designerAuthorization = { Authorization: `Bearer ${designerAccess.body.session.token}` };
+    const operationsAuthorization = { Authorization: `Bearer ${operationsAccess.body.session.token}` };
+    const designerList = await request(app).get("/api/reviews").set(designerAuthorization);
+    const operationsList = await request(app).get("/api/reviews").set(operationsAuthorization);
+    const designerOtherDetail = await request(app).get("/api/reviews/task_other").set(designerAuthorization);
+    const operationsOtherDetail = await request(app).get("/api/reviews/task_other").set(operationsAuthorization);
+
+    expect(designerList.body.map((task: { id: string }) => task.id)).toEqual(["task_hale"]);
+    expect(operationsList.body.map((task: { id: string }) => task.id).sort()).toEqual(["task_hale", "task_other"]);
+    expect(designerOtherDetail.status).toBe(403);
+    expect(operationsOtherDetail.status).toBe(200);
+  });
+
   it("does not trust actor role headers when legacy test auth is disabled", async () => {
     process.env.REVIEW_ALLOW_LEGACY_HEADER_AUTH = "0";
 

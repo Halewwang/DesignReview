@@ -45,6 +45,28 @@ export function assertCanDeleteTask(currentRole: Role, task: { submitterId?: str
   assertTaskPermission(currentRole, task, actorName, "删除");
 }
 
+export function canViewTask(
+  currentRole: Role,
+  task: { submitterId?: string; submitterName?: string },
+  actorIdentity: string
+) {
+  if (currentRole === "运营" || currentRole === "管理员") return true;
+  if (currentRole !== "设计师") return false;
+  const actor = normalizeActor(actorIdentity);
+  const ownerIds = [task.submitterId, task.submitterName].map(normalizeActor).filter(Boolean);
+  return Boolean(actor && ownerIds.includes(actor));
+}
+
+export function assertTaskViewPermission(
+  currentRole: Role,
+  task: { submitterId?: string; submitterName?: string },
+  actorIdentity: string
+) {
+  if (!canViewTask(currentRole, task, actorIdentity)) {
+    throw new Error("当前身份无权查看他人任务");
+  }
+}
+
 export function assertTaskPermission(currentRole: Role, task: { submitterId?: string; submitterName?: string }, actorIdentity: string, action: string) {
   if (currentRole === "管理员") return;
   if (currentRole !== "设计师") throw new Error(`当前身份无权${action}任务`);
