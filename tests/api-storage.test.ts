@@ -52,10 +52,15 @@ async function seedOperationReviewTask() {
   });
 }
 
+function fileSnapshot(filePath: string) {
+  return fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : null;
+}
+
 beforeEach(() => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "emke-api-storage-"));
   process.env.REVIEWS_DB_PATH = path.join(tempDir, "reviews.json");
   process.env.AI_CONFIG_PATH = path.join(tempDir, "ai-config.json");
+  process.env.BRAND_STANDARD_UPLOAD_PATH = path.join(tempDir, "brand-standard.md");
   delete process.env.DATABASE_URL;
   delete process.env.POSTGRES_URL;
   delete process.env.POSTGRES_PRISMA_URL;
@@ -72,6 +77,7 @@ afterEach(async () => {
   await drainAiReviewJobsForTest();
   delete process.env.AI_REVIEW_DISABLE_BACKGROUND;
   delete process.env.AI_REVIEW_BACKGROUND_DELAY_MS;
+  delete process.env.BRAND_STANDARD_UPLOAD_PATH;
 });
 
 describe("API validation and health", () => {
@@ -687,8 +693,64 @@ describe("API validation and health", () => {
       .set("Authorization", `Bearer ${operationsToken}`)
       .send({ comment: "任务应存在" });
 
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(404);
     expect(response.body.error).toBe("任务不存在");
+  });
+
+  it("denies every operations mutation path without changing storage or runtime configuration", async () => {
+    process.env.REVIEW_ALLOW_LEGACY_HEADER_AUTH = "0";
+    const operationsToken = await issueSession("运营", "Ops");
+    await seedOperationReviewTask();
+    await mutateDb((db) => {
+      db.frames.push({
+        id: "frame_ops_guard",
+        taskId: "task_ops_review",
+        figmaNodeId: "1:1",
+        pageName: "Page",
+        frameName: "Hero",
+        width: 1440,
+        height: 900,
+        thumbnailUrl: "data:image/png;base64,AA==",
+        exportedImageUrl: "data:image/png;base64,AA==",
+        selected: true,
+        sortOrder: 0
+      });
+    });
+
+    const aiConfigPath = process.env.AI_CONFIG_PATH!;
+    const visUploadPath = process.env.BRAND_STANDARD_UPLOAD_PATH!;
+    const authorization = { Authorization: `Bearer ${operationsToken}` };
+    const deniedRequests = [
+      { name: "create task", method: "post", path: "/api/reviews", body: { title: "Denied", contentType: "官网 Banner", figmaUrl: "https://www.figma.com/design/file-key/name" } },
+      { name: "create upload task", method: "post", path: "/api/reviews/upload-images", body: { title: "Denied", contentType: "官网 Banner", images: [{ fileName: "hero.png", mimeType: "image/png", dataUrl: "data:image/png;base64,AA==" }] } },
+      { name: "edit task", method: "patch", path: "/api/reviews/task_ops_review", body: { title: "Denied edit" } },
+      { name: "read Figma", method: "post", path: "/api/reviews/task_ops_review/read-figma", body: {} },
+      { name: "select Frames", method: "post", path: "/api/reviews/task_ops_review/select-frames", body: { frameIds: ["frame_ops_guard"] } },
+      { name: "start AI review", method: "post", path: "/api/reviews/task_ops_review/start-ai-review", body: {} },
+      { name: "retry AI review", method: "post", path: "/api/reviews/task_ops_review/run-ai-review", body: {} },
+      { name: "resubmit", method: "post", path: "/api/reviews/task_ops_review/resubmit", body: { images: [{ fileName: "hero.png", mimeType: "image/png", dataUrl: "data:image/png;base64,AA==" }] } },
+      { name: "withdraw", method: "post", path: "/api/reviews/task_ops_review/withdraw", body: {} },
+      { name: "delete or void", method: "delete", path: "/api/reviews/task_ops_review", body: undefined },
+      { name: "administrator approval", method: "post", path: "/api/reviews/task_ops_review/admin-approve", body: { reason: "Denied" } },
+      { name: "settings mutation", method: "post", path: "/api/settings/ai-config", body: { providerName: "Denied", baseURL: "https://example.com/v1", model: "denied", apiKey: "denied" } },
+      { name: "VIS mutation", method: "post", path: "/api/vis/current", body: { fileName: "denied.md", content: "# Denied" } }
+    ] as const;
+
+    for (const denied of deniedRequests) {
+      const beforeDb = structuredClone(await readDb());
+      const beforeConfig = { ai: fileSnapshot(aiConfigPath), vis: fileSnapshot(visUploadPath) };
+      const pending = denied.method === "delete"
+        ? request(app).delete(denied.path).set(authorization)
+        : request(app)[denied.method](denied.path).set(authorization).send(denied.body);
+      const response = await pending;
+
+      expect(response.status, denied.name).toBe(403);
+      expect(await readDb(), `${denied.name} database state`).toEqual(beforeDb);
+      expect(
+        { ai: fileSnapshot(aiConfigPath), vis: fileSnapshot(visUploadPath) },
+        `${denied.name} runtime configuration`
+      ).toEqual(beforeConfig);
+    }
   });
 
   it("keeps the retired director review endpoint explicit for legacy clients", async () => {

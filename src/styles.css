@@ -4857,6 +4857,25 @@ nav button,
   gap: 16px;
 }
 
+.vis-readonly {
+  align-content: start;
+  gap: 14px;
+}
+
+.vis-readonly pre {
+  max-height: 560px;
+  margin: 0;
+  overflow: auto;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface-secondary);
+  color: var(--text);
+  font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .operation-review-list {
   display: grid;
   gap: 10px;

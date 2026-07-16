@@ -20,7 +20,7 @@ import "./styles.css";
 import { formatDeductionItem } from "./shared/aiDisplay";
 import { encodeHeaderValue } from "./shared/headerEncoding";
 import { defaultTaskFilters, filterIssues, filterTasks, IssueFilters, TaskFilters } from "./shared/filters";
-import { dashboardCommandCenter, normalizeStoredReviewNavigation, reviewTimeline, runAiReviewJobIfAllowed, selectReviewRoundData, submitOperationReviewDraft, type ReviewAppView, type ReviewTimelineStageState } from "./shared/reviewFlow";
+import { dashboardCommandCenter, normalizeStoredReviewNavigation, reviewTimeline, reviewUiPermissions, runAiReviewJobIfAllowed, selectReviewRoundData, submitOperationReviewDraft, type ReviewAppView, type ReviewTimelineStageState } from "./shared/reviewFlow";
 import { scoreTone } from "./shared/scoreDisplay";
 import { detectPreferredLanguage, hasHanText, languageLabel, localizeDynamicText, type Language } from "./shared/i18n";
 import { localizedArrayItem, reviewText } from "./shared/localizedReviewText";
@@ -325,6 +325,9 @@ const uiCopy: Record<Language, Record<string, string>> = {
     "Analyzing...": "分析中...",
     "Analyze standard source": "分析标准源",
     "File name": "文件名",
+    "Read-only VIS source": "只读 VIS 标准源",
+    "Only administrators can upload or edit the VIS source. The complete current source remains available below.": "仅管理员可上传或编辑 VIS 标准源。当前完整标准源仍可在下方查看。",
+    "VIS source is loading...": "VIS 标准源加载中...",
     "Title-only section": "仅标题章节",
     "SERVER CONFIG": "SERVER CONFIG",
     "System settings": "系统设置",
@@ -413,12 +416,12 @@ function useI18n() {
   return value;
 }
 
-function readStoredNavigation() {
+function readStoredNavigation(role?: Role) {
   try {
     const raw = localStorage.getItem(navigationStorageKey);
-    return normalizeStoredReviewNavigation(raw ? JSON.parse(raw) : undefined);
+    return normalizeStoredReviewNavigation(raw ? JSON.parse(raw) : undefined, role);
   } catch {
-    return normalizeStoredReviewNavigation(undefined);
+    return normalizeStoredReviewNavigation(undefined, role);
   }
 }
 
@@ -461,8 +464,9 @@ function App() {
       return null;
     }
   });
-  const [navigation, setNavigation] = useState(() => readStoredNavigation());
-  const { view, activeTaskId } = navigation;
+  const [navigation, setNavigation] = useState(() => readStoredNavigation(session?.role));
+  const resolvedNavigation = normalizeStoredReviewNavigation(navigation, session?.role);
+  const { view, activeTaskId } = resolvedNavigation;
 
   function clearSession() {
     localStorage.removeItem("emke-session");
@@ -488,14 +492,18 @@ function App() {
   }
 
   useEffect(() => {
-    localStorage.setItem(navigationStorageKey, JSON.stringify(navigation));
-  }, [navigation]);
+    const persistedNavigation = normalizeStoredReviewNavigation(navigation, session?.role);
+    localStorage.setItem(navigationStorageKey, JSON.stringify(persistedNavigation));
+    if (navigation.view !== persistedNavigation.view || navigation.activeTaskId !== persistedNavigation.activeTaskId) {
+      setNavigation(persistedNavigation);
+    }
+  }, [navigation, session?.role]);
 
   function navigate(nextView: ReviewAppView, taskId?: string | null) {
     setNavigation((current) => normalizeStoredReviewNavigation({
       view: nextView,
       activeTaskId: taskId ?? current.activeTaskId
-    }));
+    }, session?.role));
   }
 
   if (!session) {
@@ -1669,6 +1677,7 @@ function AnnotationBox({ issue, index, active, onFocus }: { issue: Issue; index:
 
 function VisPage({ session }: { session: Session }) {
   const { t } = useI18n();
+  const permissions = reviewUiPermissions(session.role);
   const { data, error, reload } = useApi<any>("/api/vis/current", session, null);
   const [draft, setDraft] = useState("");
   const [fileName, setFileName] = useState("brand-standard.md");
@@ -1680,7 +1689,7 @@ function VisPage({ session }: { session: Session }) {
       setDraft(data.content);
       setFileName(data.fileName ?? "brand-standard.md");
     }
-  }, [data?.path]);
+  }, [data?.content, data?.fileName]);
 
   async function pickFile(file?: File) {
     if (!file) return;
@@ -1709,16 +1718,28 @@ function VisPage({ session }: { session: Session }) {
           <h2>{data?.fileName ?? "品牌设计规范.md"}</h2>
           <p>{t("The AI pre-review sends these Markdown sections as the only VIS standard source and requires the vision model to understand, cite, and apply them one by one.")}</p>
           <div className="source-meta"><span>{data?.path ?? t("Path not loaded")}</span><span>{data?.sections?.length ?? 0} sections</span></div>
-          <div className="vis-actions">
-            <label className="file-picker">{t("Upload standard source")}<input type="file" accept=".md,.markdown,.txt,text/markdown,text/plain" onChange={(event) => pickFile(event.target.files?.[0])} /></label>
-            <button className="primary" type="button" disabled={busy || !draft.trim()} onClick={upload}>{busy ? t("Analyzing...") : t("Analyze standard source")} <UploadCloud size={15} /></button>
+          {permissions.canMutateVis && (
+            <div className="vis-actions">
+              <label className="file-picker">{t("Upload standard source")}<input type="file" accept=".md,.markdown,.txt,text/markdown,text/plain" onChange={(event) => pickFile(event.target.files?.[0])} /></label>
+              <button className="primary" type="button" disabled={busy || !draft.trim()} onClick={upload}>{busy ? t("Analyzing...") : t("Analyze standard source")} <UploadCloud size={15} /></button>
+            </div>
+          )}
+        </div>
+        {permissions.canMutateVis ? (
+          <div className="upload-box">
+            <input value={fileName} onChange={(event) => setFileName(event.target.value)} placeholder={t("File name")} />
+            <textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="# EMKE VIS Standard..." />
+            {(error || actionError) && <div className="error">{error || actionError}</div>}
           </div>
-        </div>
-        <div className="upload-box">
-          <input value={fileName} onChange={(event) => setFileName(event.target.value)} placeholder={t("File name")} />
-          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="# EMKE VIS Standard..." />
-          {(error || actionError) && <div className="error">{error || actionError}</div>}
-        </div>
+        ) : (
+          <div className="upload-box vis-readonly">
+            <div>
+              <strong>{t("Read-only VIS source")}</strong>
+              <p className="meta">{t("Only administrators can upload or edit the VIS source. The complete current source remains available below.")}</p>
+            </div>
+            {error ? <div className="error">{error}</div> : <pre>{data?.content ?? t("VIS source is loading...")}</pre>}
+          </div>
+        )}
       </section>
       <div className="section-list compact-sections">{data?.sections?.map((section: any) => <article className="panel standard-card" key={section.id}><div className="eyebrow">{section.ruleType}</div><h3>{section.title}</h3>{section.content ? <p>{compactPreview(section.content)}</p> : <span className="meta">{t("Title-only section")}</span>}</article>)}</div>
     </main>
@@ -1727,6 +1748,7 @@ function VisPage({ session }: { session: Session }) {
 
 function SettingsPage({ session }: { session: Session }) {
   const { t, label } = useI18n();
+  const permissions = reviewUiPermissions(session.role);
   const { data, error, reload } = useApi<any>("/api/settings", session, null);
   const [form, setForm] = useState({ providerName: "Derouter", baseURL: "https://api.derouter.ai/openai/v1", model: "claude-sonnet-4-6", apiKey: "" });
   const [busy, setBusy] = useState(false);
@@ -1741,7 +1763,7 @@ function SettingsPage({ session }: { session: Session }) {
         apiKey: ""
       });
     }
-  }, [data?.aiProvider?.baseURL, data?.aiProvider?.model]);
+  }, [data?.aiProvider]);
 
   async function saveConfig(event: FormEvent) {
     event.preventDefault();
@@ -1758,7 +1780,7 @@ function SettingsPage({ session }: { session: Session }) {
     }
   }
 
-  if (error && error.includes("无权")) {
+  if (!permissions.canMutateSettings) {
     return (
       <main className="workspace narrow settings-page">
         <header className="settings-page-head">

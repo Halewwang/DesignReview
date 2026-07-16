@@ -102,14 +102,23 @@ export function isCurrentUserTask(task: ReviewFlowTask, currentUser: ReviewFlowU
   );
 }
 
-export function normalizeStoredReviewNavigation(value: unknown): ReviewNavigationState {
+export function normalizeStoredReviewNavigation(value: unknown, role?: ClientRole): ReviewNavigationState {
   const input = value && typeof value === "object" ? value as Partial<ReviewNavigationState> : {};
   const view = reviewViews.has(input.view as ReviewAppView) ? input.view as ReviewAppView : "dashboard";
   const activeTaskId = typeof input.activeTaskId === "string" && input.activeTaskId.trim() ? input.activeTaskId.trim() : null;
+  if (role === "运营" && (view === "new" || view === "frames")) return { view: "dashboard", activeTaskId: null };
   if ((view === "detail" || view === "frames") && !activeTaskId) return { view: "dashboard", activeTaskId: null };
   return {
     view,
     activeTaskId: view === "detail" || view === "frames" ? activeTaskId : null
+  };
+}
+
+export function reviewUiPermissions(role: ClientRole) {
+  const isAdministrator = role === "管理员";
+  return {
+    canMutateVis: isAdministrator,
+    canMutateSettings: isAdministrator
   };
 }
 

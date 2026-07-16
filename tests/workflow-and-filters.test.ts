@@ -523,6 +523,31 @@ describe("front-end filters", () => {
     });
   });
 
+  it("resolves operations navigation away from task creation and Frame selection before render", () => {
+    expect(normalizeStoredReviewNavigation({ view: "new", activeTaskId: null }, "运营")).toEqual({
+      view: "dashboard",
+      activeTaskId: null
+    });
+    expect(normalizeStoredReviewNavigation({ view: "frames", activeTaskId: "task_123" }, "运营")).toEqual({
+      view: "dashboard",
+      activeTaskId: null
+    });
+    expect(normalizeStoredReviewNavigation({ view: "detail", activeTaskId: "task_123" }, "运营")).toEqual({
+      view: "detail",
+      activeTaskId: "task_123"
+    });
+    expect(normalizeStoredReviewNavigation({ view: "vis" }, "运营")).toEqual({ view: "vis", activeTaskId: null });
+    expect(normalizeStoredReviewNavigation({ view: "settings" }, "运营")).toEqual({ view: "settings", activeTaskId: null });
+  });
+
+  it.each(["设计师", "管理员"] as const)("preserves task creation and Frame navigation for %s", (role) => {
+    expect(normalizeStoredReviewNavigation({ view: "new" }, role)).toEqual({ view: "new", activeTaskId: null });
+    expect(normalizeStoredReviewNavigation({ view: "frames", activeTaskId: "task_123" }, role)).toEqual({
+      view: "frames",
+      activeTaskId: "task_123"
+    });
+  });
+
   it("does not fall back to an older review result when the current submission round is still reviewing", () => {
     const selected = selectReviewRoundData({
       selectedRound: "latest",

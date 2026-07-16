@@ -1,7 +1,37 @@
 import { describe, expect, it } from "vitest";
-import { runAiReviewJobIfAllowed, submitOperationReviewDraft } from "../src/shared/reviewFlow";
+import { readFileSync } from "node:fs";
+import { reviewUiPermissions, runAiReviewJobIfAllowed, submitOperationReviewDraft } from "../src/shared/reviewFlow";
+
+const mainSource = readFileSync(new URL("../src/main.tsx", import.meta.url), "utf8");
+const visComponentSource = mainSource.slice(mainSource.indexOf("function VisPage"), mainSource.indexOf("function SettingsPage"));
+const settingsComponentSource = mainSource.slice(mainSource.indexOf("function SettingsPage"), mainSource.indexOf("function Metric"));
 
 describe("operations review UI behavior", () => {
+  it.each([
+    ["运营", { canMutateVis: false, canMutateSettings: false }],
+    ["设计师", { canMutateVis: false, canMutateSettings: false }],
+    ["管理员", { canMutateVis: true, canMutateSettings: true }]
+  ] as const)("defines executable VIS and Settings mutation permissions for %s", (role, expected) => {
+    expect(reviewUiPermissions(role)).toEqual(expected);
+  });
+
+  it("connects App rendering and navigation updates to the role-aware navigation policy", () => {
+    expect(mainSource).toContain("const resolvedNavigation = normalizeStoredReviewNavigation(navigation, session?.role);");
+    expect(mainSource).toContain("const { view, activeTaskId } = resolvedNavigation;");
+    expect(mainSource).toMatch(/setNavigation\(\(current\) => normalizeStoredReviewNavigation\([\s\S]*?session\?\.role\)\);/);
+  });
+
+  it("keeps VIS mutation controls inside the administrator-only branch and renders full read-only source otherwise", () => {
+    expect(visComponentSource).toContain("const permissions = reviewUiPermissions(session.role);");
+    expect(visComponentSource).toMatch(/permissions\.canMutateVis && \([\s\S]*?Upload standard source[\s\S]*?\)/);
+    expect(visComponentSource).toMatch(/permissions\.canMutateVis \? \([\s\S]*?<textarea[\s\S]*?\) : \([\s\S]*?vis-readonly[\s\S]*?data\?\.content/);
+  });
+
+  it("resolves Settings to an immediate read-only explanation for non-administrators", () => {
+    expect(settingsComponentSource).toContain("const permissions = reviewUiPermissions(session.role);");
+    expect(settingsComponentSource).toMatch(/if \(!permissions\.canMutateSettings\) {[\s\S]*?Only admins can edit system settings[\s\S]*?return \([\s\S]*?ai-config-form/);
+  });
+
   it("does not run an active AI review job when operations opens the task", async () => {
     const requests: string[] = [];
 

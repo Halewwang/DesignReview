@@ -506,6 +506,8 @@ app.post("/api/reviews/:id/operation-review", async (req, res) => {
     if (currentActor.actorRole !== "运营") {
       throw new Error("当前身份无权提交运营补充评价");
     }
+    const existing = (await readDb()).tasks.find((task) => task.id === req.params.id);
+    if (!existing) return res.status(404).json({ error: "任务不存在" });
     const comment = String(req.body?.comment ?? "").trim();
     const focus = String(req.body?.focus ?? "").trim();
     if (!comment) return res.status(400).json({ error: "请输入运营补充评价" });
