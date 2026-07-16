@@ -9,6 +9,10 @@ export type StoredSession = {
   expiresAt?: string;
 };
 
+export function accessCodeForRoleSelection(role: ClientRole, designerAccessCode: string) {
+  return role === "管理员" ? "" : designerAccessCode;
+}
+
 export function normalizeStoredSession(value: unknown): StoredSession | null {
   if (!value || typeof value !== "object") return null;
   const input = value as Partial<StoredSession>;

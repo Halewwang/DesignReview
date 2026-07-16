@@ -24,7 +24,7 @@ import { dashboardCommandCenter, normalizeStoredReviewNavigation, reviewTimeline
 import { scoreTone } from "./shared/scoreDisplay";
 import { detectPreferredLanguage, hasHanText, languageLabel, localizeDynamicText, type Language } from "./shared/i18n";
 import { localizedArrayItem, reviewText } from "./shared/localizedReviewText";
-import { normalizeStoredSession, type StoredSession } from "./shared/session";
+import { accessCodeForRoleSelection, normalizeStoredSession, type StoredSession } from "./shared/session";
 import { validateImageFiles } from "./shared/uploads";
 
 type Role = "设计师" | "管理员";
@@ -135,6 +135,8 @@ const uiCopy: Record<Language, Record<string, string>> = {
   zh: {
     "Internal design review command center. Use the access code to create tasks, select Frames, and view AI pre-review results.": "内部设计审核工作台。使用访问口令进入后，可创建任务、选择 Frame 并查看 AI 初审结果。",
     "Access code": "访问口令",
+    "Administrator access code": "管理员访问口令",
+    "Use the dedicated administrator code configured by the server": "请输入服务端配置的管理员专用口令",
     "Current role": "当前身份",
     "Name": "姓名",
     "Used in activity logs": "用于操作记录",
@@ -563,8 +565,12 @@ function AccessScreen({ onEnter }: { onEnter: (session: Session) => void }) {
         <div className="access-language"><LanguageSwitcher /></div>
         <h1>EMKE DESIGN REVIEW</h1>
         <p>{t("Internal design review command center. Use the access code to create tasks, select Frames, and view AI pre-review results.")}</p>
-        <label>{t("Access code")}<input type="password" value={accessCode} onChange={(event) => setAccessCode(event.target.value)} placeholder={defaultAccessCode} required /></label>
-        <label>{t("Current role")}<select value={role} onChange={(event) => setRole(event.target.value as Role)}><option value="设计师">{label("设计师")}</option><option value="管理员">{label("管理员")}</option></select></label>
+        <label>
+          {t(role === "管理员" ? "Administrator access code" : "Access code")}
+          <input type="password" value={accessCode} onChange={(event) => setAccessCode(event.target.value)} placeholder={role === "管理员" ? t("Use the dedicated administrator code configured by the server") : defaultAccessCode} required />
+          {role === "管理员" && <small className="meta">{t("Use the dedicated administrator code configured by the server")}</small>}
+        </label>
+        <label>{t("Current role")}<select value={role} onChange={(event) => { const nextRole = event.target.value as Role; setRole(nextRole); setAccessCode(accessCodeForRoleSelection(nextRole, defaultAccessCode)); setError(""); }}><option value="设计师">{label("设计师")}</option><option value="管理员">{label("管理员")}</option></select></label>
         <label>{t("Name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("Used in activity logs")} required /></label>
         {error && <div className="error">{error}</div>}
         <button className="primary access-submit" type="submit">{t("Enter workspace")} <ChevronRight size={16} /></button>

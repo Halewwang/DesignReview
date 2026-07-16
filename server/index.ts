@@ -86,7 +86,10 @@ app.post("/api/access", async (req, res) => {
   const name = String(req.body?.name ?? "").trim();
   const expectedCode = expectedAccessCode(role);
   if (!(["设计师", "管理员"] as Role[]).includes(role) || !name || !expectedCode || req.body?.accessCode !== expectedCode) {
-    return res.status(401).json({ error: role === "管理员" && !expectedCode ? "管理员访问口令未配置" : "访问口令错误" });
+    const error = role === "管理员"
+      ? expectedCode ? "管理员访问口令错误" : "管理员访问口令未配置"
+      : "访问口令错误";
+    return res.status(401).json({ error });
   }
   const token = crypto.randomBytes(32).toString("base64url");
   const createdAt = now();

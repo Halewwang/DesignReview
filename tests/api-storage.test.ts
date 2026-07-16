@@ -82,6 +82,7 @@ describe("API validation and health", () => {
       .send({ accessCode: "admin-secret", role: "管理员", name: "Admin" });
 
     expect(rejected.status).toBe(401);
+    expect(rejected.body.error).toBe("管理员访问口令错误");
     expect(accepted.status).toBe(200);
     expect(accepted.body.session).toMatchObject({ role: "管理员", name: "Admin" });
   });
