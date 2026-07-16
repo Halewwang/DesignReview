@@ -4851,3 +4851,61 @@ nav button,
     grid-template-columns: 26px minmax(0, 1fr);
   }
 }
+
+.operation-review-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.operation-review-list {
+  display: grid;
+  gap: 10px;
+}
+
+.operation-review-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+  background: var(--surface-secondary);
+}
+
+.operation-review-card > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: center;
+}
+
+.operation-review-card time,
+.operation-review-card span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.operation-review-card em {
+  display: inline-flex;
+  margin-top: 10px;
+}
+
+.operation-review-card p {
+  margin: 10px 0 0;
+  white-space: pre-wrap;
+}
+
+.operation-review-form {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.4fr) minmax(280px, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.operation-review-form textarea {
+  min-height: 96px;
+  resize: vertical;
+}
+
+@media (max-width: 900px) {
+  .operation-review-form {
+    grid-template-columns: 1fr;
+  }
+}

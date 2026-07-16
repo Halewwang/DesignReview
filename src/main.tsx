@@ -27,7 +27,7 @@ import { localizedArrayItem, reviewText } from "./shared/localizedReviewText";
 import { accessCodeForRoleSelection, normalizeStoredSession, type StoredSession } from "./shared/session";
 import { validateImageFiles } from "./shared/uploads";
 
-type Role = "设计师" | "管理员";
+type Role = "设计师" | "运营" | "管理员";
 type ContentType = "电商页面" | "Amazon A+ 页面" | "官网 Banner";
 type ReviewStatus =
   | "draft"
@@ -98,11 +98,21 @@ type Issue = {
   annotationSuggestion?: { type: "point" | "rect"; xPercent: number; yPercent: number; widthPercent?: number; heightPercent?: number };
 };
 type LocalizedText = { zh?: string; en?: string };
+type OperationReview = {
+  id: string;
+  taskId: string;
+  submissionRound: number;
+  reviewerName: string;
+  comment: string;
+  focus: string;
+  createdAt: string;
+};
 type Detail = {
   task: Task;
   frames: Frame[];
   results: any[];
   issues: Issue[];
+  operationReviews: OperationReview[];
   rounds?: number[];
   logs: any[];
   job?: ReviewJob;
@@ -256,6 +266,14 @@ const uiCopy: Record<Language, Record<string, string>> = {
     "Admin approve failed": "管理员通过失败",
     "No workflow action needed": "当前无需流程操作",
     "Evidence and issues": "证据与问题",
+    "Enter an operations supplemental review": "请输入运营补充评价",
+    "Operations review failed": "运营补充评价提交失败",
+    "Operations supplemental reviews": "运营补充评价",
+    "Append-only context that does not change the AI decision or workflow status.": "仅补充业务背景，不改变 AI 结论或流程状态。",
+    "No operations reviews yet": "暂无运营补充评价",
+    "Review focus": "评价重点",
+    "Supplemental review": "补充评价",
+    "Submit supplemental review": "提交补充评价",
     "Supporting history": "辅助记录",
     "Intake": "提交/选图",
     "AI analysis": "AI 分析",
@@ -570,7 +588,7 @@ function AccessScreen({ onEnter }: { onEnter: (session: Session) => void }) {
           <input type="password" value={accessCode} onChange={(event) => setAccessCode(event.target.value)} placeholder={role === "管理员" ? t("Use the dedicated administrator code configured by the server") : defaultAccessCode} required />
           {role === "管理员" && <small className="meta">{t("Use the dedicated administrator code configured by the server")}</small>}
         </label>
-        <label>{t("Current role")}<select value={role} onChange={(event) => { const nextRole = event.target.value as Role; setRole(nextRole); setAccessCode(accessCodeForRoleSelection(nextRole, defaultAccessCode)); setError(""); }}><option value="设计师">{label("设计师")}</option><option value="管理员">{label("管理员")}</option></select></label>
+        <label>{t("Current role")}<select value={role} onChange={(event) => { const nextRole = event.target.value as Role; setRole(nextRole); setAccessCode(accessCodeForRoleSelection(nextRole, defaultAccessCode)); setError(""); }}><option value="设计师">{label("设计师")}</option><option value="运营">{label("运营")}</option><option value="管理员">{label("管理员")}</option></select></label>
         <label>{t("Name")}<input value={name} onChange={(event) => setName(event.target.value)} placeholder={t("Used in activity logs")} required /></label>
         {error && <div className="error">{error}</div>}
         <button className="primary access-submit" type="submit">{t("Enter workspace")} <ChevronRight size={16} /></button>
@@ -653,10 +671,12 @@ function Dashboard({ session, onNew, onOpen }: { session: Session; onNew: () => 
           <h1>Hi,{session.name}</h1>
           <p>{t("Track review queues, AI pre-review results, revision risks, and VIS sources.")}</p>
         </div>
-        <button className="hero-button primary" type="button" onClick={onNew}>
-          <UploadCloud size={16} />
-          {t("New review task")}
-        </button>
+        {session.role !== "运营" && (
+          <button className="hero-button primary" type="button" onClick={onNew}>
+            <UploadCloud size={16} />
+            {t("New review task")}
+          </button>
+        )}
       </section>
 
       <section className="command-dashboard">
@@ -1106,6 +1126,8 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
   const [error, setError] = useState("");
   const [resubmitBusy, setResubmitBusy] = useState(false);
   const [adminApproveBusy, setAdminApproveBusy] = useState(false);
+  const [operationDraft, setOperationDraft] = useState({ focus: "", comment: "" });
+  const [operationBusy, setOperationBusy] = useState(false);
   const uploadResubmitInputRef = useRef<HTMLInputElement>(null);
   const runningJobRef = useRef("");
   const frames = detailData?.frames.filter((frame) => frame.selected || frame.exportedImageUrl) ?? [];
@@ -1216,6 +1238,31 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
     }
   }
 
+  async function submitOperationReview(event: FormEvent) {
+    event.preventDefault();
+    if (!operationDraft.comment.trim()) {
+      setError(t("Enter an operations supplemental review"));
+      return;
+    }
+    setError("");
+    setOperationBusy(true);
+    try {
+      await api(`/api/reviews/${taskId}/operation-review`, session, {
+        method: "POST",
+        body: {
+          focus: operationDraft.focus.trim(),
+          comment: operationDraft.comment.trim()
+        }
+      });
+      setOperationDraft({ focus: "", comment: "" });
+      reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("Operations review failed"));
+    } finally {
+      setOperationBusy(false);
+    }
+  }
+
   async function withdrawTask() {
     if (!window.confirm(t("Confirm withdrawing this review task? It will remain recorded but leave the review queue."))) return;
     setError("");
@@ -1256,9 +1303,9 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
   if (!detailData) return <main className="workspace"><div className="panel">{loadError || t("Loading review details...")}</div></main>;
   const currentUserKeys = [session.userId, session.name].map((value) => String(value ?? "").trim().toLowerCase()).filter(Boolean);
   const ownsTask = [detailData.task.submitterId, detailData.task.submitterName].map((value) => String(value ?? "").trim().toLowerCase()).some((value) => currentUserKeys.includes(value));
-  const canManageTask = session.role === "管理员" || ownsTask;
+  const canManageTask = session.role === "管理员" || (session.role === "设计师" && ownsTask);
   const canWithdraw = canManageTask && ["frame_selection", "needs_revision", "resubmitted", "figma_read_failed", "ai_review_failed"].includes(detailData.task.status);
-  const canDelete = (session.role === "管理员" || ownsTask) && ["draft", "figma_reading", "frame_selection", "ai_reviewing", "needs_revision", "resubmitted", "approved", "archived", "withdrawn", "figma_read_failed", "ai_review_failed"].includes(detailData.task.status);
+  const canDelete = canManageTask && ["draft", "figma_reading", "frame_selection", "ai_reviewing", "needs_revision", "resubmitted", "approved", "archived", "withdrawn", "figma_read_failed", "ai_review_failed"].includes(detailData.task.status);
   const canAdminApprove = session.role === "管理员" && ["needs_revision", "ai_review_failed"].includes(detailData.task.status);
   const workflowActions = (
     <section className="panel decision-actions-panel preview-workflow-panel">
@@ -1359,6 +1406,36 @@ function ReviewDetail({ session, taskId, onFrames, onDashboard }: { session: Ses
             </div>
           </section>
         </aside>
+        <section className="panel operation-review-panel">
+          <div className="panel-head">
+            <div>
+              <h3>{t("Operations supplemental reviews")}</h3>
+              <p className="meta">{t("Append-only context that does not change the AI decision or workflow status.")}</p>
+            </div>
+            <span>{detailData.operationReviews.length}</span>
+          </div>
+          <div className="operation-review-list">
+            {detailData.operationReviews.map((review) => (
+              <article className="operation-review-card" key={review.id}>
+                <div>
+                  <strong>{review.reviewerName}</strong>
+                  <span>{t("Round {round} submission", { round: review.submissionRound })}</span>
+                  <time>{new Date(review.createdAt).toLocaleString()}</time>
+                </div>
+                {review.focus && <em>{review.focus}</em>}
+                <p>{review.comment}</p>
+              </article>
+            ))}
+            {detailData.operationReviews.length === 0 && <p className="meta">{t("No operations reviews yet")}</p>}
+          </div>
+          {session.role === "运营" && (
+            <form className="operation-review-form" onSubmit={submitOperationReview}>
+              <label>{t("Review focus")}<input value={operationDraft.focus} onChange={(event) => setOperationDraft({ ...operationDraft, focus: event.target.value })} /></label>
+              <label>{t("Supplemental review")}<textarea required value={operationDraft.comment} onChange={(event) => setOperationDraft({ ...operationDraft, comment: event.target.value })} /></label>
+              <button className="primary" type="submit" disabled={operationBusy}>{operationBusy ? t("Submitting...") : t("Submit supplemental review")}</button>
+            </form>
+          )}
+        </section>
         <section className="panel log-panel review-log-panel">
           <div className="panel-head"><h3>{t("Supporting history")}</h3><span>{detailData.logs.length}</span></div>
           <div className="log-grid">

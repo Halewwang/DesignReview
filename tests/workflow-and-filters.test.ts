@@ -1,9 +1,13 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { assertCanDeleteTask, assertRole, assertTaskPermission, assertTaskViewPermission, assertTransition, canDeleteTaskStatus, canViewTask, canWithdrawTaskStatus, getAiDecisionStatus, getPreviousIssueRound, normalizeAiOnlyStatus } from "../server/services/workflow";
 import { aiImageDetail, normalizeAiReview, reviewRubric, runAiReview, toReviewIssue } from "../server/services/aiReview";
 import { dashboardLanes, defaultTaskFilters, filterIssues, filterTasks } from "../src/shared/filters";
 import { dashboardCommandCenter, normalizeStoredReviewNavigation, reviewTimeline, selectReviewRoundData } from "../src/shared/reviewFlow";
 import { validateImageFiles } from "../src/shared/uploads";
+
+const mainSource = readFileSync(new URL("../src/main.tsx", import.meta.url), "utf8");
+const stylesSource = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 
 const baseTask = {
   id: "task_1",
@@ -399,8 +403,9 @@ describe("AI schema validation", () => {
 });
 
 describe("front-end filters", () => {
-  it("defaults designers to their own tasks while admins see the whole queue", () => {
+  it("defaults designers to their own tasks while privileged readers see the whole queue", () => {
     expect(defaultTaskFilters("设计师")).toMatchObject({ onlyMine: true });
+    expect(defaultTaskFilters("运营")).toMatchObject({ onlyMine: false });
     expect(defaultTaskFilters("管理员")).toMatchObject({ onlyMine: false });
   });
 
@@ -552,5 +557,36 @@ describe("front-end filters", () => {
     });
 
     expect(result.map((issue) => issue.id)).toEqual(["i1"]);
+  });
+});
+
+describe("operations UI contracts", () => {
+  it("offers operations between designer and administrator at login", () => {
+    expect(mainSource).toMatch(/<option value="设计师">[\s\S]*<option value="运营">[\s\S]*<option value="管理员">/);
+  });
+
+  it("hides task creation from operations", () => {
+    expect(mainSource).toMatch(/session\.role !== "运营" && \([\s\S]*?New review task[\s\S]*?\)}/);
+  });
+
+  it("never grants task management to operations through an owner name match", () => {
+    expect(mainSource).toContain('const canManageTask = session.role === "管理员" || (session.role === "设计师" && ownsTask);');
+    expect(mainSource).toMatch(/const canDelete = canManageTask && \[/);
+  });
+
+  it("shows supplemental review history to every reader but the form only to operations", () => {
+    expect(mainSource).toMatch(/<section className="panel operation-review-panel">[\s\S]*?detailData\.operationReviews\.map[\s\S]*?{session\.role === "运营" && \(/);
+    expect(mainSource).toContain('api(`/api/reviews/${taskId}/operation-review`, session');
+  });
+
+  it("includes the exact localized operations review copy", () => {
+    expect(mainSource).toContain('"Enter an operations supplemental review": "请输入运营补充评价"');
+    expect(mainSource).toContain('"Operations review failed": "运营补充评价提交失败"');
+    expect(mainSource).toContain('"Append-only context that does not change the AI decision or workflow status.": "仅补充业务背景，不改变 AI 结论或流程状态。"');
+  });
+
+  it("stacks the operations review form at the required responsive breakpoint", () => {
+    expect(stylesSource).toMatch(/\.operation-review-form\s*{[^}]*grid-template-columns:\s*minmax\(180px,\s*0\.4fr\)\s*minmax\(280px,\s*1fr\)\s*auto;/s);
+    expect(stylesSource).toMatch(/@media\s*\(max-width:\s*900px\)\s*{\s*\.operation-review-form\s*{\s*grid-template-columns:\s*1fr;/s);
   });
 });
