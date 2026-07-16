@@ -91,6 +91,12 @@ describe("workflow guards", () => {
     expect(canViewTask("管理员", task, "Admin")).toBe(true);
     expect(() => assertTaskViewPermission("设计师", task, "Other")).toThrow("当前身份无权查看他人任务");
   });
+
+  it("does not treat a display name as the owner when a canonical submitter ID exists", () => {
+    const task = { submitterId: "EMKE-Hale", submitterName: "Shared Name" };
+
+    expect(canViewTask("设计师", task, "Shared Name")).toBe(false);
+  });
 });
 
 describe("AI schema validation", () => {
